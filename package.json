@@ -1,0 +1,8 @@
+{
+  "name": "atri",
+  "version": "0.1.0",
+  "main": "index.js",
+  "repository": "https://github.com/Shigma/atri.git",
+  "author": "Shigma <1700011071@pku.edu.cn>",
+  "license": "LGPL-3.0-or-later"
+}
