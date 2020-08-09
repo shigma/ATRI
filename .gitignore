@@ -17,3 +17,10 @@ tsconfig.tsbuildinfo
 *.ntvs*
 *.njsproj
 *.sln
+
+sample/go/*.lib
+sample/go/*.exp
+sample/go/*.txt
+sample/go/*.def
+sample/go/*.dll
+sample/go/request.h

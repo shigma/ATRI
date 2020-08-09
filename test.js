@@ -1,4 +1,6 @@
 // test.js
-const addon = require('./build/Release/addon');
+const { request } = require('./sample/binding/build/Release/atri');
 
-console.log('This should be eight:', addon.add(3, 5));
+request("http://www.baidu.com", (err, body) => {
+    console.log(body.slice(0, 1000))
+})

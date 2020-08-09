@@ -1,15 +1,15 @@
 {
-    "dll_files" : [
-        'D:\\UserFiles\\Desktop\\Projects\\go-expr\\calculate_pi.dll'
-    ],
+  "dll_files" : [
+    "../go/request.dll"
+  ],
   "targets": [
     {
-      "target_name": "node-calculator",
+      "target_name": "atri",
       "sources": [
-        "node-calculate_pi.cc"
+        "atri.cc"
       ],
       "libraries": [
-        "../calculate_pi.lib"
+        "../../go/request.lib"
       ],
       "conditions": [
         # ["OS==\"win\"", {
