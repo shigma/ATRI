@@ -1,4 +1,5 @@
 import { exec as _exec } from "child_process"
+import glob from "fast-glob"
 import * as path from "path"
 import * as util from "util"
 import * as assert from "assert"
@@ -13,7 +14,12 @@ async function build(workDir: string, filename: string, platform: "win") {
     case "win": {
       const HEADER_PATH = path.join(workDir, `${filename}.h`)
       const DEF_PATH = path.join(outDir, `${filename}.def`)
-      const VS_TOOLS_PATH = "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\Community\\VC\\Tools\\MSVC\\14.26.28801\\bin\\Hostx64\\x64"
+      const [VS_TOOLS_PATH] = await glob('**/bin/Hostx64/x64', {
+        cwd: "C:/Program Files (x86)/Microsoft Visual Studio",
+        onlyDirectories: true,
+        absolute: true,
+      })
+      if (!VS_TOOLS_PATH) throw new Error('VS_TOOLS_PATH not found')
       const VS_TOOLS_PATH_ENV = {
         ...process.env,
         Path: VS_TOOLS_PATH + path.delimiter + process.env.Path
