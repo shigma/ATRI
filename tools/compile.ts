@@ -1,7 +1,7 @@
 import * as path from "path"
 import { setCwd, step, exec, fs } from './utils'
 
-export default async function build(entry: string) {
+export default async function compile(entry: string) {
   const entryDir = path.dirname(entry)
   const filename = path.basename(entry)
 
@@ -22,5 +22,5 @@ export default async function build(entry: string) {
 }
 
 if (require.main.filename === __filename) {
-  build(process.argv[2])
+  compile(process.argv[2])
 }

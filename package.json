@@ -6,7 +6,8 @@
   "author": "Shigma <1700011071@pku.edu.cn>",
   "license": "AGPL-3.0-only",
   "scripts": {
-    "cgo": "ts-node tools/cgo src/main"
+    "compile": "ts-node tools/compile src/main",
+    "bind": "ts-node tools/bind src/main bind"
   },
   "devDependencies": {
     "@types/ms": "^0.7.31",

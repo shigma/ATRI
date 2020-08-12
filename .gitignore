@@ -20,10 +20,9 @@ tsconfig.tsbuildinfo
 
 src/*.lib
 src/*.exp
-src/*.txt
 src/*.def
 src/*.dll
-src/main.h
+src/*.h
 
 sample/go/*.lib
 sample/go/*.exp
