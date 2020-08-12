@@ -11,27 +11,77 @@ import (
 
 	"github.com/Mrs4s/MiraiGo/client"
 	"github.com/Mrs4s/MiraiGo/message"
+	log "github.com/sirupsen/logrus"
+)
+import (
+	"bufio"
+	"bytes"
+	"image"
+	"io/ioutil"
+	"os"
+	"unsafe"
+
+	asciiart "github.com/yinghau76/go-ascii-art"
 )
 
 var bot *CQBot
 
-//export _login
-func _login(uin C.longlong, pw *C.char) {
-	cli := client.NewClient(int64(uin), C.GoString(pw))
-	// TODO error handling
-	cli.Login()
-	bot = &CQBot{
-		Client: cli,
+func Check(err error) {
+	if err != nil {
+		log.Fatalf("遇到错误: %v", err)
 	}
 }
 
+//export _login
+func _login(uin C.longlong, pw *C.char) {
+	console := bufio.NewReader(os.Stdin)
+	client.SystemDeviceInfo.ReadJson([]byte("{\"display\":\"MIRAI.991110.001\",\"finger_print\":\"mamoe/mirai/mirai:10/MIRAI.200122.001/3854695:user/release-keys\",\"boot_id\":\"3B51B494-F2B9-6577-045F-D9CC60EAAB2C\",\"proc_version\":\"Linux version 3.0.31-BOECBqqM (android-build@xxx.xxx.xxx.xxx.com)\",\"imei\":\"116708152627273\"}"))
+	cli := client.NewClient(int64(uin), C.GoString(pw))
+	// TODO error handling
+	rsp, err := cli.Login()
+	for {
+		Check(err)
+		if !rsp.Success {
+			switch rsp.Error {
+			case client.NeedCaptcha:
+				_ = ioutil.WriteFile("captcha.jpg", rsp.CaptchaImage, os.ModePerm)
+				img, _, _ := image.Decode(bytes.NewReader(rsp.CaptchaImage))
+				fmt.Println(asciiart.New("image", img).Art)
+				log.Warn("请输入验证码 (captcha.jpg)： (Enter 提交)")
+				text, _ := console.ReadString('\n')
+				rsp, err = cli.SubmitCaptcha(strings.ReplaceAll(text, "\n", ""), rsp.CaptchaSign)
+				continue
+			case client.UnsafeDeviceError:
+				log.Warnf("账号已开启设备锁，请前往 -> %v <- 验证并重启Bot.", rsp.VerifyUrl)
+				log.Infof(" 按 Enter 继续....")
+				_, _ = console.ReadString('\n')
+				return
+			case client.OtherLoginError, client.UnknownLoginError:
+				log.Fatalf("登录失败: %v", rsp.ErrorMessage)
+			}
+		}
+		break
+	}
+	log.Info("开始加载好友列表...")
+	Check(cli.ReloadFriendList())
+	log.Infof("共加载 %v 个好友.", len(cli.FriendList))
+	log.Infof("开始加载群列表...")
+	Check(cli.ReloadGroupList())
+	log.Infof("共加载 %v 个群.", len(cli.GroupList))
+	bot = &CQBot{
+		Client: cli,
+	}
+	log.Infof("登录成功: %v", cli.Nickname)
+}
+
 //export _onPrivateMessage
-func _onPrivateMessage(url_ *C.char, ctx C.size_t, cb C.Callback) {
-	// TODO add event listener somehow
+func _onPrivateMessage(cb C.ByteCallback, ctx C.uintptr_t) {
 	bot.Client.OnPrivateMessage(func(c *client.QQClient, m *message.PrivateMessage) {
-		content := ToStringMessage(m.Elements, 0, true)
-		C.InvokeCallback(cb, ctx, C.CString(content))
+		cqm := ToStringMessage(m.Elements, 0, true)
+		log.Infof("收到好友 %v(%v) 的消息: %v", m.Sender.DisplayName(), m.Sender.Uin, cqm)
+		C.InvokeByteCallback(cb, ctx, unsafe.Pointer(C.CString(cqm)), nil, C.size_t(len(cqm)))
 	})
+	log.Infof("回调函数已注册")
 }
 
 type CQBot struct {

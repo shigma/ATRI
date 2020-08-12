@@ -3,7 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-typedef void (*Callback)(uintptr_t, char*);
-void InvokeCallback(Callback, uintptr_t, char*);
+typedef void (*ByteCallback)(uintptr_t, void*, void*, size_t); // ctx, result, error, length
+void InvokeByteCallback(ByteCallback, uintptr_t, void*, void*, size_t);
 
 #endif

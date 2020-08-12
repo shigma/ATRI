@@ -4,4 +4,6 @@ go 1.14
 
 require (
 	github.com/Mrs4s/MiraiGo v0.0.0-20200812011522-ee1117893fad
+	github.com/sirupsen/logrus v1.6.0
+	github.com/yinghau76/go-ascii-art v0.0.0-20190517192627-e7f465a30189
 )
