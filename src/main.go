@@ -1,24 +1,37 @@
 package main
 
 import (
-	// #include "def.h"
+	// #include "../bind/def.h"
 	"C"
 	"fmt"
 	"hash/crc32"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/Mrs4s/MiraiGo/client"
 	"github.com/Mrs4s/MiraiGo/message"
 )
-import "strings"
+
+var bot *CQBot
 
 //export _login
 func _login(uin C.longlong, pw *C.char) {
 	cli := client.NewClient(int64(uin), C.GoString(pw))
 	// TODO error handling
 	cli.Login()
-	NewQQBot(cli)
+	bot = &CQBot{
+		Client: cli,
+	}
+}
+
+//export _onPrivateMessage
+func _onPrivateMessage(url_ *C.char, ctx C.size_t, cb C.Callback) {
+	// TODO add event listener somehow
+	bot.Client.OnPrivateMessage(func(c *client.QQClient, m *message.PrivateMessage) {
+		content := ToStringMessage(m.Elements, 0, true)
+		C.InvokeCallback(cb, ctx, C.CString(content))
+	})
 }
 
 type CQBot struct {
@@ -29,15 +42,6 @@ type CQBot struct {
 	invitedReqCache sync.Map
 	joinReqCache    sync.Map
 	tempMsgCache    sync.Map
-}
-
-func NewQQBot(cli *client.QQClient) *CQBot {
-	bot := &CQBot{
-		Client: cli,
-	}
-	// TODO add event listener somehow
-	bot.Client.OnPrivateMessage(bot.privateMessageEvent)
-	return bot
 }
 
 type MSG map[string]interface{}
