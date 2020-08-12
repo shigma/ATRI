@@ -5,11 +5,14 @@
 #include <ios>
 #include <functional>
 #include <iostream>
+#include <ctime>
 #include "../go/request.h"
+#include <chrono> 
 
 #define ENSURE_UV(x) assert(x == 0);
-
 namespace ATRI {
+	using v8::ArrayBuffer;
+	using v8::BackingStore;
 	using v8::Exception;
 	using v8::External;
 	using v8::Context;
@@ -59,66 +62,111 @@ namespace ATRI {
 		return *value ? *value : "<string conversion failed>";
 	}
 
-	struct Work {
+	Local<Value> ToJSON(Isolate* isolate, Local<Context> context, char* string) {
+		return v8::JSON::Parse(context, String::NewFromUtf8(isolate, string).ToLocalChecked()).ToLocalChecked();
+	}
+
+	struct ByteWork {
 		uv_async_t request{};
+		v8::Persistent<Function> callback;
+		bool isListener;
+		ByteWork(Isolate* isolate, Local<Function> callback, bool isListener): callback(isolate, callback), isListener(isListener) {
+			request.data = this;
+			request.close_cb = close_callback_func;
+		}
 
-		std::string url;
+		~ByteWork() {
+			delete result;
+			delete error;
+		}
+
+		void Invoke() {
+			ENSURE_UV(uv_async_init(uv_default_loop(), &this->request, this->node_callback_func));
+			_call();
+		}
+
+		virtual void _call() = 0;
+
+		void Dispose() {
+			uv_close((uv_handle_t*)&request, NULL);
+		}
+
+		char* error = nullptr;
 		char* result = nullptr;
-
-		v8::Persistent<Function> node_callback;
-		static void go_callback_func(uintptr_t ctx, char* ret) {
-			Work* work = reinterpret_cast<Work*>(ctx);
-			work->result = ret;
+		size_t length = -1;
+		static void go_callback_func(uintptr_t ctx, void* result, void* error, size_t length) {
+			ByteWork* work = reinterpret_cast<ByteWork*>(ctx);
+			assert((error == nullptr) ^ (result == nullptr)); // one of them
+			if (result) {
+				memcpy(work->result = new char[length + 1], result, length);
+				work->result[length] = '\0';
+			}
+			else {
+				memcpy(work->error = new char[length + 1], error, length);
+				work->error[length] = '\0';
+			}
+			work->length = length;
 			ENSURE_UV(uv_async_send(&work->request));
 		}
+
 		static void node_callback_func(uv_async_t* request) {
-			Work* work = static_cast<Work*>(request->data);
+			ByteWork* work = static_cast<ByteWork*>(request->data);
 
 			Isolate* isolate = Isolate::GetCurrent();
 			v8::HandleScope handleScope(isolate);
 
 			Local<Context> ctx = isolate->GetCurrentContext();
-			Local<Value> argv[2] = { v8::Null(isolate), String::NewFromUtf8(isolate, work->result).ToLocalChecked() };
-			Local<Function>::New(isolate, work->node_callback)->Call(ctx, ctx->Global(), 2, argv);
-			work->node_callback.Reset();
-			uv_close((uv_handle_t*)request, NULL);
+
+			Local<Value> argv[2] {
+				work->error == nullptr ? static_cast<Local<Value>>(v8::Null(isolate)) : ToJSON(isolate, ctx, work->error),
+				work->result == nullptr ? static_cast<Local<Value>>(v8::Null(isolate)) : ToJSON(isolate, ctx, work->result)
+			};
+
+			Local<Function>::New(isolate, work->callback)->Call(ctx, ctx->Global(), 2, argv);
+			work->callback.Reset();
+			if (!work->isListener) {
+				work->Dispose();
+			}
 		}
+
 		static void close_callback_func(uv_handle_t* request) {
-			Work* work = static_cast<Work*>(request->data);
+			ByteWork* work = static_cast<ByteWork*>(request->data);
 			delete work;
 		}
-		~Work()
-		{
-			// delete result;
+
+		// For test purpose
+		uint64_t now = uv_hrtime();
+		void update_and_print(int tag) {
+			uint64_t next = uv_hrtime();
+			uint64_t duration = next - now;
+			std::cout << tag << ":" << duration << std::endl;
+			now = uv_hrtime();
+		}
+	};
+
+	struct RequestWork : ByteWork {
+		std::string url;
+
+		RequestWork(
+			Isolate* isolate, Local<Function> callback,
+			std::string url
+		) : ByteWork(isolate, callback, false), url(url) {}
+
+		void _call() {
+			RequestC(const_cast<char*>(url.c_str()), go_callback_func, reinterpret_cast<uintptr_t>(this));
 		}
 	};
 
 	void request(const FunctionCallbackInfo<Value>& args) {
 		Isolate* isolate = args.GetIsolate();
-		Local<Context> ctx = isolate->GetCurrentContext();
 
 		const std::string url = ToString(isolate, Local<String>::Cast(args[0]));
 		const Local<Function> callback = Local<Function>::Cast(args[1]);
 
-		Work* work = new Work;
-		work->request.data = work;
-		work->request.close_cb = work->close_callback_func;
-		work->node_callback.Reset(isolate, callback);
-		work->url = url;
-
-		ENSURE_UV(uv_async_init(uv_default_loop(), &work->request, work->node_callback_func));
-		Request(const_cast<char*>(url.c_str()), reinterpret_cast<size_t>(work), work->go_callback_func);
-
+		ByteWork* work = new RequestWork(isolate, callback, url);
+		work->Invoke();
 		args.GetReturnValue().Set(Undefined(isolate));
 	}
-
-	// v8::ObjectTemplate tpl;
-	// void test(const FunctionCallbackInfo<Value>& args) {
-	// 	Isolate* isolate = args.GetIsolate();
-	// 	Local<Context> ctx = isolate->GetCurrentContext();
-	// 	AddonContext* addon = static_cast<AddonContext*>(args.Data().As<External>()->Value());
-	// 	Local<Object> obj = addon->tpl->NewInstance(ctx).ToLocalChecked();
-	// }
 
 	void init(Local<Object> exports, Local<Value> module, Local<Context> context) {
 		Isolate* isolate = context->GetIsolate();
