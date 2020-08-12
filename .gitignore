@@ -18,6 +18,13 @@ tsconfig.tsbuildinfo
 *.njsproj
 *.sln
 
+src/*.lib
+src/*.exp
+src/*.txt
+src/*.def
+src/*.dll
+src/main.h
+
 sample/go/*.lib
 sample/go/*.exp
 sample/go/*.txt
