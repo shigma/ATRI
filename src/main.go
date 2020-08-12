@@ -16,6 +16,7 @@ import (
 import (
 	"bufio"
 	"bytes"
+	"encoding/json"
 	"image"
 	"io/ioutil"
 	"os"
@@ -78,8 +79,13 @@ func _login(uin C.longlong, pw *C.char) {
 func _onPrivateMessage(cb C.ByteCallback, ctx C.uintptr_t) {
 	bot.Client.OnPrivateMessage(func(c *client.QQClient, m *message.PrivateMessage) {
 		cqm := ToStringMessage(m.Elements, 0, true)
+		b, err := json.Marshal(cqm)
+		if err != nil {
+			log.Infof("遇到错误: %v", err)
+			return
+		}
 		log.Infof("收到好友 %v(%v) 的消息: %v", m.Sender.DisplayName(), m.Sender.Uin, cqm)
-		C.InvokeByteCallback(cb, ctx, unsafe.Pointer(C.CString(cqm)), nil, C.size_t(len(cqm)))
+		C.InvokeByteCallback(cb, ctx, unsafe.Pointer(&b[0]), nil, C.size_t(len(b)))
 	})
 	log.Infof("回调函数已注册")
 }

@@ -78,14 +78,14 @@ namespace ATRI {
 			delete error;
 		}
 
-		void Invoke() {
+		template<typename F, typename... Ts>
+		void Invoke(F func, Ts... args) {
 			ENSURE_UV(uv_async_init(uv_default_loop(), &this->request, this->node_callback_func));
-			_call();
+			func(args..., go_callback_func, reinterpret_cast<uintptr_t>(this));
 		}
 
-		virtual void _call() = 0;
-
 		void Dispose() {
+			this->callback.Reset();
 			uv_close((uv_handle_t*)&request, NULL);
 		}
 
@@ -115,15 +115,20 @@ namespace ATRI {
 
 			Local<Context> ctx = isolate->GetCurrentContext();
 
-			Local<Value> argv[2] {
-				work->error == nullptr ? static_cast<Local<Value>>(v8::Null(isolate)) : ToJSON(isolate, ctx, work->error),
-				work->result == nullptr ? static_cast<Local<Value>>(v8::Null(isolate)) : ToJSON(isolate, ctx, work->result)
-			};
-
-			Local<Function>::New(isolate, work->callback)->Call(ctx, ctx->Global(), 2, argv);
-			work->callback.Reset();
 			if (!work->isListener) {
+				Local<Value> argv[2]{
+					work->error == nullptr ? static_cast<Local<Value>>(v8::Null(isolate)) : ToJSON(isolate, ctx, work->error),
+					work->result == nullptr ? static_cast<Local<Value>>(v8::Null(isolate)) : ToJSON(isolate, ctx, work->result)
+				};
+
+				Local<Function>::New(isolate, work->callback)->Call(ctx, ctx->Global(), 2, argv);
 				work->Dispose();
+			} else {
+				Local<Value> argv[1]{
+					ToJSON(isolate, ctx, work->result)
+				};
+
+				Local<Function>::New(isolate, work->callback)->Call(ctx, ctx->Global(), 1, argv);
 			}
 		}
 
@@ -151,24 +156,14 @@ namespace ATRI {
 		_login(uid, const_cast<char*>(psw.c_str()));
 	}
 
-	struct RequestWork: ByteWork {
-		RequestWork(
-			Isolate* isolate, Local<Function> callback
-		) : ByteWork(isolate, callback, false) {}
-
-		void _call() {
-			_onPrivateMessage(go_callback_func, reinterpret_cast<uintptr_t>(this));
-		}
-	};
-
 	void onPrivateMessage(const FunctionCallbackInfo<Value>& args) {
 		Isolate* isolate = args.GetIsolate();
 		Local<Context> ctx = isolate->GetCurrentContext();
 
 		const Local<Function> callback = Local<Function>::Cast(args[0]);
 
-		ByteWork* work = new RequestWork(isolate, callback);
-		work->Invoke();
+		ByteWork* work = new ByteWork(isolate, callback, true);
+		work->Invoke(_onPrivateMessage);
 		args.GetReturnValue().Set(Undefined(isolate));
 	}
 
