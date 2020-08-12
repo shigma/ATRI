@@ -5,6 +5,9 @@
   "repository": "https://github.com/Shigma/atri.git",
   "author": "Shigma <1700011071@pku.edu.cn>",
   "license": "AGPL-3.0-only",
+  "scripts": {
+    "cgo": "ts-node build/cgo src/main"
+  },
   "devDependencies": {
     "@types/ms": "^0.7.31",
     "@types/node": "^14.0.27",
