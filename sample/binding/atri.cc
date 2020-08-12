@@ -80,12 +80,11 @@ namespace ATRI {
 			delete error;
 		}
 
-		void Invoke() {
+		template<typename F, typename... Ts>
+		void Invoke(F func, Ts... args) {
 			ENSURE_UV(uv_async_init(uv_default_loop(), &this->request, this->node_callback_func));
-			_call();
+			func(args..., go_callback_func, reinterpret_cast<uintptr_t>(this));
 		}
-
-		virtual void _call() = 0;
 
 		void Dispose() {
 			uv_close((uv_handle_t*)&request, NULL);
@@ -117,15 +116,22 @@ namespace ATRI {
 
 			Local<Context> ctx = isolate->GetCurrentContext();
 
-			Local<Value> argv[2] {
-				work->error == nullptr ? static_cast<Local<Value>>(v8::Null(isolate)) : ToJSON(isolate, ctx, work->error),
-				work->result == nullptr ? static_cast<Local<Value>>(v8::Null(isolate)) : ToJSON(isolate, ctx, work->result)
-			};
-
-			Local<Function>::New(isolate, work->callback)->Call(ctx, ctx->Global(), 2, argv);
-			work->callback.Reset();
 			if (!work->isListener) {
+				Local<Value> argv[2]{
+					work->error == nullptr ? static_cast<Local<Value>>(v8::Null(isolate)) : ToJSON(isolate, ctx, work->error),
+					work->result == nullptr ? static_cast<Local<Value>>(v8::Null(isolate)) : ToJSON(isolate, ctx, work->result)
+				};
+
+				Local<Function>::New(isolate, work->callback)->Call(ctx, ctx->Global(), 2, argv);
+				work->callback.Reset();
 				work->Dispose();
+			} else {
+				Local<Value> argv[1]{
+					ToJSON(isolate, ctx, work->result)
+				};
+
+				Local<Function>::New(isolate, work->callback)->Call(ctx, ctx->Global(), 1, argv);
+				work->callback.Reset();
 			}
 		}
 
@@ -144,27 +150,12 @@ namespace ATRI {
 		}
 	};
 
-	struct RequestWork : ByteWork {
-		std::string url;
-
-		RequestWork(
-			Isolate* isolate, Local<Function> callback,
-			std::string url
-		) : ByteWork(isolate, callback, false), url(url) {}
-
-		void _call() {
-			RequestC(const_cast<char*>(url.c_str()), go_callback_func, reinterpret_cast<uintptr_t>(this));
-		}
-	};
-
 	void request(const FunctionCallbackInfo<Value>& args) {
 		Isolate* isolate = args.GetIsolate();
-
 		const std::string url = ToString(isolate, Local<String>::Cast(args[0]));
 		const Local<Function> callback = Local<Function>::Cast(args[1]);
-
-		ByteWork* work = new RequestWork(isolate, callback, url);
-		work->Invoke();
+		ByteWork* work = new ByteWork(isolate, callback, false);
+		work->Invoke(RequestC, const_cast<char*>(url.c_str()));
 		args.GetReturnValue().Set(Undefined(isolate));
 	}
 
