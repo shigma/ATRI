@@ -10,6 +10,35 @@
 
 #define ENSURE_UV(x) assert(x == 0);
 
+// 这里一 free 就崩溃
+// “就一点内存，泄露就泄露了”——jjyyxx
+// “或者 c 处理完以后 notify go”——西格玛
+// “妙哉”——jjyyxx
+// 至于具体是否有效果，之后可以用一些大字符串检验
+
+#define DEFINE_API_SYNC(name) \
+proto_t->Set(isolate, #name, FunctionTemplate::New(isolate, [] (const FunctionCallbackInfo<Value>& args) -> void { \
+	Isolate* isolate = args.GetIsolate(); \
+	Local<Context> ctx = isolate->GetCurrentContext(); \
+	const auto This = args.This(); \
+	void* bot = This->GetAlignedPointerFromInternalField(0); \
+	char* result = name(bot); \
+	args.GetReturnValue().Set(ToJSON(isolate, ctx, result)); \
+	GoFree(result); \
+}))
+
+#define DEFINE_API_SYNC_INT64(name) \
+proto_t->Set(isolate, #name, FunctionTemplate::New(isolate, [] (const FunctionCallbackInfo<Value>& args) -> void { \
+	Isolate* isolate = args.GetIsolate(); \
+	int64_t arg0 = Convert<int64_t>(isolate, args[0]); \
+	Local<Context> ctx = isolate->GetCurrentContext(); \
+	const auto This = args.This(); \
+	void* bot = This->GetAlignedPointerFromInternalField(0); \
+	char* result = name(bot, arg0); \
+	args.GetReturnValue().Set(ToJSON(isolate, ctx, result)); \
+	GoFree(result); \
+}))
+
 namespace ATRI {
 	using v8::Array;
 	using v8::Exception;
@@ -291,22 +320,6 @@ namespace ATRI {
 		args.GetReturnValue().Set(Undefined(isolate));
 	}
 
-	void getFriendList(const FunctionCallbackInfo<Value>& args) {
-		Isolate* isolate = args.GetIsolate();
-		Local<Context> ctx = isolate->GetCurrentContext();
-		const auto This = args.This();
-		void* bot = This->GetAlignedPointerFromInternalField(0);
-
-		char* result = _getFriendList(bot);
-		args.GetReturnValue().Set(ToJSON(isolate, ctx, result));
-		_goFree(result);
-		// 这里一 free 就崩溃
-		// “就一点内存，泄露就泄露了”——jjyyxx
-		// “或者 c 处理完以后 notify go”——西格玛
-		// “妙哉”——jjyyxx
-		// 至于具体是否有效果，之后可以用一些大字符串检验
-	}
-
 	void init(Local<Object> exports, Local<Value> module, Local<Context> context) {
 		Isolate* isolate = context->GetIsolate();
 		// AddonContext* addon = new AddonContext(isolate);
@@ -321,8 +334,12 @@ namespace ATRI {
 
 		auto proto_t = t->PrototypeTemplate();
 		proto_t->Set(v8::Symbol::GetToStringTag(isolate), ClientString, static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontEnum | v8::DontDelete));
-		proto_t->Set(isolate, "onPrivateMessage", v8::FunctionTemplate::New(isolate, onPrivateMessage));
-		proto_t->Set(isolate, "getFriendList", v8::FunctionTemplate::New(isolate, getFriendList));
+		proto_t->Set(isolate, "onPrivateMessage", FunctionTemplate::New(isolate, onPrivateMessage));
+
+		DEFINE_API_SYNC(getFriendList);
+		DEFINE_API_SYNC(getGroupList);
+		DEFINE_API_SYNC_INT64(getGroupInfo);
+		DEFINE_API_SYNC_INT64(getGroupMemberList);
 
 		exports->Set(
 			context,

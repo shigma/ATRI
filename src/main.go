@@ -11,6 +11,7 @@ import (
 	"image"
 	"io/ioutil"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -30,8 +31,8 @@ func Check(err error) {
 	}
 }
 
-//export _goFree
-func _goFree(p unsafe.Pointer) {
+//export GoFree
+func GoFree(p unsafe.Pointer) {
 	C.free(p)
 }
 
@@ -85,7 +86,24 @@ func _onPrivateMessage(botC unsafe.Pointer, cb C.ByteCallback, ctx C.uintptr_t) 
 	bot := (*CQBot)(botC)
 	bot.Client.OnPrivateMessage(func(c *client.QQClient, m *message.PrivateMessage) {
 		cqm := ToStringMessage(m.Elements, 0, true)
-		b, err := json.Marshal(cqm)
+		b, err := json.Marshal(MSG{
+			"post_type":    "message",
+			"message_type": "private",
+			"sub_type":     "friend",
+			"message_id":   ToGlobalId(m.Sender.Uin, m.Id),
+			"user_id":      m.Sender.Uin,
+			"message":      ToFormattedMessage(m.Elements, 0, false),
+			"raw_message":  cqm,
+			"font":         0,
+			"self_id":      c.Uin,
+			"time":         time.Now().Unix(),
+			"sender": MSG{
+				"user_id":  m.Sender.Uin,
+				"nickname": m.Sender.Nickname,
+				"sex":      "unknown",
+				"age":      0,
+			},
+		})
 		if err != nil {
 			log.Infof("遇到错误: %v", err)
 			return
@@ -114,45 +132,6 @@ func ToGlobalId(code int64, msgId int32) int32 {
 func ToFormattedMessage(e []message.IMessageElement, code int64, raw ...bool) (r interface{}) {
 	r = ToStringMessage(e, code, raw...)
 	return
-}
-
-func (bot *CQBot) privateMessageEvent(c *client.QQClient, m *message.PrivateMessage) {
-	// checkMedia(m.Elements)
-	cqm := ToStringMessage(m.Elements, 0, true)
-	// log.Infof("收到好友 %v(%v) 的消息: %v", m.Sender.DisplayName(), m.Sender.Uin, cqm)
-	fm := MSG{
-		"post_type":    "message",
-		"message_type": "private",
-		"sub_type":     "friend",
-		"message_id":   ToGlobalId(m.Sender.Uin, m.Id),
-		"user_id":      m.Sender.Uin,
-		"message":      ToFormattedMessage(m.Elements, 0, false),
-		"raw_message":  cqm,
-		"font":         0,
-		"self_id":      c.Uin,
-		"time":         time.Now().Unix(),
-		"sender": MSG{
-			"user_id":  m.Sender.Uin,
-			"nickname": m.Sender.Nickname,
-			"sex":      "unknown",
-			"age":      0,
-		},
-	}
-	bot.dispatchEventMessage(fm)
-}
-
-func (bot *CQBot) dispatchEventMessage(m MSG) {
-	for _, f := range bot.events {
-		fn := f
-		go func() {
-			start := time.Now()
-			fn(m)
-			end := time.Now()
-			if end.Sub(start) > time.Second*5 {
-				// log.Debugf("警告: 事件处理耗时超过 5 秒 (%v秒), 请检查应用是否有堵塞.", end.Sub(start)/time.Second)
-			}
-		}()
-	}
 }
 
 func CQCodeEscapeText(raw string) string {
@@ -210,8 +189,8 @@ func ToStringMessage(e []message.IMessageElement, code int64, raw ...bool) (r st
 func main() {
 }
 
-//export _getFriendList
-func _getFriendList(botC unsafe.Pointer) *C.char {
+//export getFriendList
+func getFriendList(botC unsafe.Pointer) *C.char {
 	bot := (*CQBot)(botC)
 	var fs []MSG
 	for _, f := range bot.Client.FriendList {
@@ -223,4 +202,80 @@ func _getFriendList(botC unsafe.Pointer) *C.char {
 	}
 	b, _ := json.Marshal(fs)
 	return C.CString(string(b))
+}
+
+//export getGroupList
+func getGroupList(botC unsafe.Pointer) *C.char {
+	bot := (*CQBot)(botC)
+	var gs []MSG
+	for _, g := range bot.Client.GroupList {
+		gs = append(gs, MSG{
+			"group_id":         g.Code,
+			"group_name":       g.Name,
+			"max_member_count": g.MaxMemberCount,
+			"member_count":     g.MemberCount,
+		})
+	}
+	b, _ := json.Marshal(gs)
+	return C.CString(string(b))
+}
+
+//export getGroupInfo
+func getGroupInfo(botC unsafe.Pointer, groupId int64) *C.char {
+	bot := (*CQBot)(botC)
+	group := bot.Client.FindGroup(groupId)
+	if group == nil {
+		return C.CString("null")
+	}
+	b, _ := json.Marshal(MSG{
+		"group_id":         group.Code,
+		"group_name":       group.Name,
+		"max_member_count": group.MaxMemberCount,
+		"member_count":     group.MemberCount,
+	})
+	return C.CString(string(b))
+}
+
+//export getGroupMemberList
+func getGroupMemberList(botC unsafe.Pointer, groupId int64) *C.char {
+	bot := (*CQBot)(botC)
+	group := bot.Client.FindGroup(groupId)
+	if group == nil {
+		return C.CString("null")
+	}
+	var members []MSG
+	for _, m := range group.Members {
+		members = append(members, convertGroupMemberInfo(groupId, m))
+	}
+	b, _ := json.Marshal(members)
+	return C.CString(string(b))
+}
+
+func convertGroupMemberInfo(groupId int64, m *client.GroupMemberInfo) MSG {
+	return MSG{
+		"group_id":       groupId,
+		"user_id":        m.Uin,
+		"nickname":       m.Nickname,
+		"card":           m.CardName,
+		"sex":            "unknown",
+		"age":            0,
+		"area":           "",
+		"join_time":      m.JoinTime,
+		"last_sent_time": m.LastSpeakTime,
+		"level":          strconv.FormatInt(int64(m.Level), 10),
+		"role": func() string {
+			switch m.Permission {
+			case client.Owner:
+				return "owner"
+			case client.Administrator:
+				return "admin"
+			default:
+				return "member"
+			}
+		}(),
+		"unfriendly":        false,
+		"title":             m.SpecialTitle,
+		"title_expire_time": m.SpecialTitleExpireTime,
+		"card_changeable":   false,
+	}
 }
