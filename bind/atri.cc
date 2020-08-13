@@ -55,9 +55,34 @@ namespace ATRI {
 	// private:
 	// };
 
-	const std::string ToString(Isolate* isolate, Local<String> str) {
+	std::string convert(Isolate* isolate, Local<String> str) {
 		String::Utf8Value value(isolate, str);
-		return *value ? *value : "<string conversion failed>";
+		return *value;
+	}
+
+	template<typename T>
+	T Convert(Isolate* isolate, Local<Value> value) {
+		if constexpr (std::is_same_v<T, std::string>) {
+			assert(value->IsString());
+			String::Utf8Value value(isolate, value);
+			return *value;
+		}
+		else if constexpr (std::is_same_v<T, bool>) {
+			assert(value->IsBoolean());
+			return value->BooleanValue(isolate);
+		}
+		else if constexpr (std::is_floating_point_v<T>) {
+			assert(value->IsNumber());
+			return value->NumberValue(isolate->GetCurrentContext()).FromJust();
+		}
+		else if constexpr (std::is_integral_v<T>) {
+			assert(value->IsNumber());
+			return value->IntegerValue(isolate->GetCurrentContext()).FromJust();
+		}
+		else if constexpr (std::is_same_v<T, Local<Function>>) {
+			assert(value->IsFunction());
+			return Local<Function>::Cast(value);
+		}
 	}
 
 	Local<Value> ToJSON(Isolate* isolate, Local<Context> context, char* string) {
@@ -147,49 +172,55 @@ namespace ATRI {
 		}
 	};
 
-	void login(const FunctionCallbackInfo<Value>& args) {
+	void instantiate(const FunctionCallbackInfo<Value>& args) {
+		assert(args.IsConstructCall());
+		
 		Isolate* isolate = args.GetIsolate();
 		Local<Context> ctx = isolate->GetCurrentContext();
 
-		const int64_t uid = args[0].As<Integer>()->Value();
-		const std::string psw = ToString(isolate, Local<String>::Cast(args[1]));
-		_login(uid, const_cast<char*>(psw.c_str()));
+		auto uid = Convert<int64_t>(isolate, args[0]);
+		auto psw = Convert<std::string>(isolate, args[1]);
+		void* bot = reinterpret_cast<void*>(_login(uid, const_cast<char*>(psw.c_str())));
+		
+		assert(bot);
+
+		const auto This = args.This();
+		This->SetAlignedPointerInInternalField(0, bot);
 	}
 
 	void onPrivateMessage(const FunctionCallbackInfo<Value>& args) {
 		Isolate* isolate = args.GetIsolate();
 		Local<Context> ctx = isolate->GetCurrentContext();
+		const auto This = args.This();
+		void* bot = This->GetAlignedPointerFromInternalField(0);
 
-		const Local<Function> callback = Local<Function>::Cast(args[0]);
-
+		auto callback = Convert<Local<Function>>(isolate, args[0]);
 		ByteWork* work = new ByteWork(isolate, callback, true);
-		work->Invoke(_onPrivateMessage);
+		work->Invoke(_onPrivateMessage, bot);
+
 		args.GetReturnValue().Set(Undefined(isolate));
 	}
-
-	// v8::ObjectTemplate tpl;
-	// void test(const FunctionCallbackInfo<Value>& args) {
-	// 	Isolate* isolate = args.GetIsolate();
-	// 	Local<Context> ctx = isolate->GetCurrentContext();
-	// 	AddonContext* addon = static_cast<AddonContext*>(args.Data().As<External>()->Value());
-	// 	Local<Object> obj = addon->tpl->NewInstance(ctx).ToLocalChecked();
-	// }
 
 	void init(Local<Object> exports, Local<Value> module, Local<Context> context) {
 		Isolate* isolate = context->GetIsolate();
 		// AddonContext* addon = new AddonContext(isolate);
 		// Local<External> external = External::New(isolate, addon);
 
-		exports->Set(
-			context,
-			String::NewFromUtf8(isolate, "login").ToLocalChecked(),
-			FunctionTemplate::New(isolate, login)->GetFunction(context).ToLocalChecked()
-		);
+		auto t = FunctionTemplate::New(isolate, instantiate);
+		auto ClientString = String::NewFromUtf8(isolate, "Client").ToLocalChecked();
+		t->SetClassName(ClientString);
+
+		auto inst_t = t->InstanceTemplate();
+		inst_t->SetInternalFieldCount(1);
+
+		auto proto_t = t->PrototypeTemplate();
+		proto_t->Set(v8::Symbol::GetToStringTag(isolate), ClientString, static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontEnum | v8::DontDelete));
+		proto_t->Set(isolate, "onPrivateMessage", v8::FunctionTemplate::New(isolate, onPrivateMessage));
 
 		exports->Set(
 			context,
-			String::NewFromUtf8(isolate, "onPrivateMessage").ToLocalChecked(),
-			FunctionTemplate::New(isolate, onPrivateMessage)->GetFunction(context).ToLocalChecked()
+			ClientString,
+			t->GetFunction(context).ToLocalChecked()
 		);
 	}
 }

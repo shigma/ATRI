@@ -25,7 +25,7 @@ import (
 	asciiart "github.com/yinghau76/go-ascii-art"
 )
 
-var bot *CQBot
+var botRegistry map[int64]*CQBot = make(map[int64]*CQBot)
 
 func Check(err error) {
 	if err != nil {
@@ -34,10 +34,12 @@ func Check(err error) {
 }
 
 //export _login
-func _login(uin C.longlong, pw *C.char) {
+func _login(uinC C.longlong, pw *C.char) uintptr {
 	console := bufio.NewReader(os.Stdin)
 	client.SystemDeviceInfo.ReadJson([]byte("{\"display\":\"MIRAI.991110.001\",\"finger_print\":\"mamoe/mirai/mirai:10/MIRAI.200122.001/3854695:user/release-keys\",\"boot_id\":\"3B51B494-F2B9-6577-045F-D9CC60EAAB2C\",\"proc_version\":\"Linux version 3.0.31-BOECBqqM (android-build@xxx.xxx.xxx.xxx.com)\",\"imei\":\"116708152627273\"}"))
-	cli := client.NewClient(int64(uin), C.GoString(pw))
+	uin := int64(uinC)
+	cli := client.NewClient(uin, C.GoString(pw))
+	// TODO error handling
 	rsp, err := cli.Login()
 	for {
 		Check(err)
@@ -55,7 +57,7 @@ func _login(uin C.longlong, pw *C.char) {
 				log.Warnf("账号已开启设备锁，请前往 -> %v <- 验证并重启Bot.", rsp.VerifyUrl)
 				log.Infof(" 按 Enter 继续....")
 				_, _ = console.ReadString('\n')
-				return
+				return 0
 			case client.OtherLoginError, client.UnknownLoginError:
 				log.Fatalf("登录失败: %v", rsp.ErrorMessage)
 			}
@@ -68,14 +70,17 @@ func _login(uin C.longlong, pw *C.char) {
 	log.Infof("开始加载群列表...")
 	Check(cli.ReloadGroupList())
 	log.Infof("共加载 %v 个群.", len(cli.GroupList))
-	bot = &CQBot{
+	ptr := &CQBot{
 		Client: cli,
 	}
+	botRegistry[uin] = ptr
 	log.Infof("登录成功: %v", cli.Nickname)
+	return uintptr(unsafe.Pointer(ptr))
 }
 
 //export _onPrivateMessage
-func _onPrivateMessage(cb C.ByteCallback, ctx C.uintptr_t) {
+func _onPrivateMessage(botC unsafe.Pointer, cb C.ByteCallback, ctx C.uintptr_t) {
+	bot := (*CQBot)(botC)
 	bot.Client.OnPrivateMessage(func(c *client.QQClient, m *message.PrivateMessage) {
 		cqm := ToStringMessage(m.Elements, 0, true)
 		b, err := json.Marshal(cqm)
