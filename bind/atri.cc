@@ -5,11 +5,13 @@
 #include <ios>
 #include <functional>
 #include <iostream>
+#include <atomic>
 #include "../src/main.h"
 
 #define ENSURE_UV(x) assert(x == 0);
 
 namespace ATRI {
+	using v8::Array;
 	using v8::Exception;
 	using v8::External;
 	using v8::Context;
@@ -64,8 +66,8 @@ namespace ATRI {
 	T Convert(Isolate* isolate, Local<Value> value) {
 		if constexpr (std::is_same_v<T, std::string>) {
 			assert(value->IsString());
-			String::Utf8Value value(isolate, value);
-			return *value;
+			String::Utf8Value str(isolate, value);
+			return *str;
 		}
 		else if constexpr (std::is_same_v<T, bool>) {
 			assert(value->IsBoolean());
@@ -89,16 +91,15 @@ namespace ATRI {
 		return v8::JSON::Parse(context, String::NewFromUtf8(isolate, string).ToLocalChecked()).ToLocalChecked();
 	}
 
-	struct ByteWork {
+	struct AsyncByteWork {
 		uv_async_t request{};
 		v8::Persistent<Function> callback;
-		bool isListener;
-		ByteWork(Isolate* isolate, Local<Function> callback, bool isListener): callback(isolate, callback), isListener(isListener) {
+		AsyncByteWork(Isolate* isolate, Local<Function> callback): callback(isolate, callback) {
 			request.data = this;
 			request.close_cb = close_callback_func;
 		}
 
-		~ByteWork() {
+		~AsyncByteWork() {
 			delete result;
 			delete error;
 		}
@@ -117,8 +118,14 @@ namespace ATRI {
 		char* error = nullptr;
 		char* result = nullptr;
 		size_t length = -1;
+		std::atomic_bool called = false;
 		static void go_callback_func(uintptr_t ctx, void* result, void* error, size_t length) {
-			ByteWork* work = reinterpret_cast<ByteWork*>(ctx);
+			AsyncByteWork* work = reinterpret_cast<AsyncByteWork*>(ctx);
+
+			bool expect = false;
+			work->called.compare_exchange_strong(expect, true);
+			assert(!expect);
+
 			assert((error == nullptr) ^ (result == nullptr)); // one of them
 			if (result) {
 				memcpy(work->result = new char[length + 1], result, length);
@@ -133,32 +140,113 @@ namespace ATRI {
 		}
 
 		static void node_callback_func(uv_async_t* request) {
-			ByteWork* work = static_cast<ByteWork*>(request->data);
+			AsyncByteWork* work = static_cast<AsyncByteWork*>(request->data);
 
 			Isolate* isolate = Isolate::GetCurrent();
 			v8::HandleScope handleScope(isolate);
 
 			Local<Context> ctx = isolate->GetCurrentContext();
 
-			if (!work->isListener) {
-				Local<Value> argv[2]{
-					work->error == nullptr ? static_cast<Local<Value>>(v8::Null(isolate)) : ToJSON(isolate, ctx, work->error),
-					work->result == nullptr ? static_cast<Local<Value>>(v8::Null(isolate)) : ToJSON(isolate, ctx, work->result)
-				};
+			Local<Value> argv[2]{
+				work->error == nullptr ? static_cast<Local<Value>>(v8::Null(isolate)) : ToJSON(isolate, ctx, work->error),
+				work->result == nullptr ? static_cast<Local<Value>>(v8::Null(isolate)) : ToJSON(isolate, ctx, work->result)
+			};
 
-				Local<Function>::New(isolate, work->callback)->Call(ctx, ctx->Global(), 2, argv);
-				work->Dispose();
-			} else {
-				Local<Value> argv[1]{
-					ToJSON(isolate, ctx, work->result)
-				};
-
-				Local<Function>::New(isolate, work->callback)->Call(ctx, ctx->Global(), 1, argv);
-			}
+			Local<Function>::New(isolate, work->callback)->Call(ctx, ctx->Global(), 2, argv);
+			work->Dispose();
 		}
 
 		static void close_callback_func(uv_handle_t* request) {
-			ByteWork* work = static_cast<ByteWork*>(request->data);
+			AsyncByteWork* work = static_cast<AsyncByteWork*>(request->data);
+			delete work;
+		}
+
+		// For test purpose
+		uint64_t now = uv_hrtime();
+		void update_and_print(int tag) {
+			uint64_t next = uv_hrtime();
+			uint64_t duration = next - now;
+			std::cout << tag << ":" << duration << std::endl;
+			now = uv_hrtime();
+		}
+	};
+
+	struct ListenerByteWork {
+		uv_async_t request{};
+		uv_mutex_t mutex{};
+		v8::Persistent<Function> callback;
+		ListenerByteWork(Isolate* isolate, Local<Function> callback) : callback(isolate, callback) {
+			request.data = this;
+			request.close_cb = close_callback_func;
+		}
+
+		~ListenerByteWork() {
+			delete buffer;
+		}
+
+		template<typename F, typename... Ts>
+		void Invoke(F func, Ts... args) {
+			this->replace_buffer();
+			ENSURE_UV(uv_async_init(uv_default_loop(), &this->request, this->node_callback_func));
+			ENSURE_UV(uv_mutex_init(&this->mutex));
+			func(args..., go_callback_func, reinterpret_cast<uintptr_t>(this));
+		}
+
+		void Dispose() {
+			// TODO: much more tricky than Async
+			this->callback.Reset();
+			uv_close((uv_handle_t*)&request, NULL);
+		}
+
+		std::vector<char*>* buffer;
+		std::vector<char*>* replace_buffer() {
+			auto old = buffer;
+			buffer = new std::vector<char*>(); // give a suitable initial size?
+			return old;
+		}
+
+		static void go_callback_func(uintptr_t ctx, void* result, void* error, size_t length) {
+			ListenerByteWork* work = reinterpret_cast<ListenerByteWork*>(ctx);
+			assert(error == nullptr);
+			char* message = new char[length + 1];
+			memcpy(message, result, length);
+			message[length] = '\0';
+			
+			uv_mutex_lock(&work->mutex);
+			work->buffer->push_back(message);
+			uv_mutex_unlock(&work->mutex);
+
+			ENSURE_UV(uv_async_send(&work->request));
+		}
+
+		static void node_callback_func(uv_async_t* request) {
+			ListenerByteWork* work = static_cast<ListenerByteWork*>(request->data);
+
+			uv_mutex_lock(&work->mutex);
+			const auto result = work->replace_buffer();
+			uv_mutex_unlock(&work->mutex);
+
+			Isolate* isolate = Isolate::GetCurrent();
+			v8::HandleScope handleScope(isolate);
+
+			Local<Context> ctx = isolate->GetCurrentContext();
+
+			const size_t length = result->size();
+			Local<Value>* valueArray = new Local<Value>[length];
+			for (size_t i = 0; i < length; i++)
+			{
+				char* c = result->at(i);
+				valueArray[i] = ToJSON(isolate, ctx, c);
+				delete[] c;
+			}
+			delete result;
+
+			Local<Value> argv[1]{ Array::New(isolate, valueArray, length) };
+			Local<Function>::New(isolate, work->callback)->Call(ctx, ctx->Global(), 1, argv);
+		}
+
+		static void close_callback_func(uv_handle_t* request) {
+			ListenerByteWork* work = static_cast<ListenerByteWork*>(request->data);
 			delete work;
 		}
 
@@ -195,7 +283,7 @@ namespace ATRI {
 		void* bot = This->GetAlignedPointerFromInternalField(0);
 
 		auto callback = Convert<Local<Function>>(isolate, args[0]);
-		ByteWork* work = new ByteWork(isolate, callback, true);
+		ListenerByteWork* work = new ListenerByteWork(isolate, callback);
 		work->Invoke(_onPrivateMessage, bot);
 
 		args.GetReturnValue().Set(Undefined(isolate));
