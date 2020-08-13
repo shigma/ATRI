@@ -296,7 +296,7 @@ namespace ATRI {
 		void* bot = This->GetAlignedPointerFromInternalField(0);
 
 		char* result = _getFriendList(bot);
-		args.GetReturnValue().Set(String::NewFromUtf8(isolate, result).ToLocalChecked());
+		args.GetReturnValue().Set(ToJSON(isolate, ctx, result));
 		// 这里一 free 就崩溃
 		// “就一点内存，泄露就泄露了”——jjyyxx
 		// free(result);
