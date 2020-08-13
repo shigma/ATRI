@@ -297,9 +297,12 @@ namespace ATRI {
 
 		char* result = _getFriendList(bot);
 		args.GetReturnValue().Set(ToJSON(isolate, ctx, result));
+		_goFree(result);
 		// 这里一 free 就崩溃
 		// “就一点内存，泄露就泄露了”——jjyyxx
-		// free(result);
+		// “或者 c 处理完以后 notify go”——西格玛
+		// “妙哉”——jjyyxx
+		// 至于具体是否有效果，之后可以用一些大字符串检验
 	}
 
 	void init(Local<Object> exports, Local<Value> module, Local<Context> context) {

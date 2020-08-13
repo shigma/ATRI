@@ -30,6 +30,11 @@ func Check(err error) {
 	}
 }
 
+//export _goFree
+func _goFree(p unsafe.Pointer) {
+	C.free(p)
+}
+
 //export _login
 func _login(uinC C.longlong, pw *C.char) uintptr {
 	console := bufio.NewReader(os.Stdin)
