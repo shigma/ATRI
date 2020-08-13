@@ -28,7 +28,7 @@ export function step<T>(text: string, callback: () => Promise<T>): Promise<T> {
   })
 }
 
-export const _exec = util.promisify(cp.exec)
+const _exec = util.promisify(cp.exec)
 export function exec(command: string, options: cp.ExecOptions = {}) {
   return step(command, async () => {
     const { stdout, stderr } = await _exec(command, {
@@ -37,5 +37,20 @@ export function exec(command: string, options: cp.ExecOptions = {}) {
     })
     if (stderr) throw stderr
     return stdout
+  })
+}
+
+export async function spawn(command: string, options: cp.SpawnOptions) {
+  console.log(chalk.blue('$'), command)
+  const argv = command.split(/\s+/)
+  const argv0 = argv.shift()
+  const child = cp.spawn(argv0, argv, {
+    stdio: 'inherit',
+    ...options,
+  })
+  return new Promise((resolve, reject) => {
+    child.on('close', (code) => {
+      return code ? reject() : resolve()
+    })
   })
 }

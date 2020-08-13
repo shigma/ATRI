@@ -1,4 +1,4 @@
-import { step, exec, fs, _exec, setCwd } from "./utils"
+import { step, exec, fs, spawn, setCwd } from "./utils"
 import * as path from "path"
 import glob from "fast-glob"
 
@@ -42,9 +42,7 @@ export default async function bind(entry: string, bindingDir: string) {
 
   // node-gyp
   // rebuild = clean + configure + build
-  await step('node gyp rebuild', async () => {
-    await _exec('node-gyp rebuild', { cwd: bindingDir })
-  })
+  await spawn('node-gyp.cmd rebuild', { cwd: bindingDir })
 
   // copy dependency
   await step('copy dependency', async () => {
