@@ -38,7 +38,6 @@ func _login(uin C.longlong, pw *C.char) {
 	console := bufio.NewReader(os.Stdin)
 	client.SystemDeviceInfo.ReadJson([]byte("{\"display\":\"MIRAI.991110.001\",\"finger_print\":\"mamoe/mirai/mirai:10/MIRAI.200122.001/3854695:user/release-keys\",\"boot_id\":\"3B51B494-F2B9-6577-045F-D9CC60EAAB2C\",\"proc_version\":\"Linux version 3.0.31-BOECBqqM (android-build@xxx.xxx.xxx.xxx.com)\",\"imei\":\"116708152627273\"}"))
 	cli := client.NewClient(int64(uin), C.GoString(pw))
-	// TODO error handling
 	rsp, err := cli.Login()
 	for {
 		Check(err)
@@ -87,7 +86,6 @@ func _onPrivateMessage(cb C.ByteCallback, ctx C.uintptr_t) {
 		log.Infof("收到好友 %v(%v) 的消息: %v", m.Sender.DisplayName(), m.Sender.Uin, cqm)
 		C.InvokeByteCallback(cb, ctx, unsafe.Pointer(&b[0]), nil, C.size_t(len(b)))
 	})
-	log.Infof("回调函数已注册")
 }
 
 type CQBot struct {

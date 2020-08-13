@@ -1,4 +1,4 @@
-import { step, exec, fs, _exec } from "./utils"
+import { step, exec, fs, _exec, setCwd } from "./utils"
 import * as path from "path"
 import glob from "fast-glob"
 
@@ -16,6 +16,8 @@ export default async function bind(entry: string, bindingDir: string) {
     if (!VS_TOOLS_PATH) throw new Error('vs tools not found')
     process.env.PATH = VS_TOOLS_PATH + path.delimiter + process.env.PATH
   })
+
+  setCwd(entryDir)
 
   // generate lib from dll
   const exports = await exec(`dumpbin /exports ${filename}.dll`, {
@@ -48,4 +50,8 @@ export default async function bind(entry: string, bindingDir: string) {
   await step('copy dependency', async () => {
     await fs.copyFile(entry + ".dll", path.join(bindingDir, 'build/release', filename + '.dll'))
   })
+}
+
+if (require.main.filename === __filename) {
+  bind(process.argv[2], process.argv[3])
 }
