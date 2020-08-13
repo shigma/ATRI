@@ -201,6 +201,19 @@ namespace ATRI {
 		args.GetReturnValue().Set(Undefined(isolate));
 	}
 
+	void getFriendList(const FunctionCallbackInfo<Value>& args) {
+		Isolate* isolate = args.GetIsolate();
+		Local<Context> ctx = isolate->GetCurrentContext();
+		const auto This = args.This();
+		void* bot = This->GetAlignedPointerFromInternalField(0);
+
+		char* result = _getFriendList(bot);
+		args.GetReturnValue().Set(String::NewFromUtf8(isolate, result).ToLocalChecked());
+		// 这里一 free 就崩溃
+		// “就一点内存，泄露就泄露了”——jjyyxx
+		// free(result);
+	}
+
 	void init(Local<Object> exports, Local<Value> module, Local<Context> context) {
 		Isolate* isolate = context->GetIsolate();
 		// AddonContext* addon = new AddonContext(isolate);
@@ -216,6 +229,7 @@ namespace ATRI {
 		auto proto_t = t->PrototypeTemplate();
 		proto_t->Set(v8::Symbol::GetToStringTag(isolate), ClientString, static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontEnum | v8::DontDelete));
 		proto_t->Set(isolate, "onPrivateMessage", v8::FunctionTemplate::New(isolate, onPrivateMessage));
+		proto_t->Set(isolate, "getFriendList", v8::FunctionTemplate::New(isolate, getFriendList));
 
 		exports->Set(
 			context,

@@ -3,25 +3,22 @@ package main
 import (
 	// #include "../bind/def.h"
 	"C"
+	"bufio"
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"hash/crc32"
+	"image"
+	"io/ioutil"
+	"os"
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/Mrs4s/MiraiGo/client"
 	"github.com/Mrs4s/MiraiGo/message"
 	log "github.com/sirupsen/logrus"
-)
-import (
-	"bufio"
-	"bytes"
-	"encoding/json"
-	"image"
-	"io/ioutil"
-	"os"
-	"unsafe"
-
 	asciiart "github.com/yinghau76/go-ascii-art"
 )
 
@@ -206,4 +203,19 @@ func ToStringMessage(e []message.IMessageElement, code int64, raw ...bool) (r st
 }
 
 func main() {
+}
+
+//export _getFriendList
+func _getFriendList(botC unsafe.Pointer) *C.char {
+	bot := (*CQBot)(botC)
+	var fs []MSG
+	for _, f := range bot.Client.FriendList {
+		fs = append(fs, MSG{
+			"nickname": f.Nickname,
+			"remark":   f.Remark,
+			"user_id":  f.Uin,
+		})
+	}
+	b, _ := json.Marshal(fs)
+	return C.CString(string(b))
 }
