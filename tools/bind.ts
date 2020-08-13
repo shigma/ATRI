@@ -8,11 +8,13 @@ export default async function bind(entry: string, bindingDir: string) {
 
   // find vs tools
   await step('find vs tools', async () => {
-    const [VS_TOOLS_PATH] = await glob('**/bin/Hostx64/x64', {
+    const dirs = await glob('**/bin/Hostx64/x64', {
       cwd: "C:/Program Files (x86)/Microsoft Visual Studio",
       onlyDirectories: true,
       absolute: true,
     })
+    // always use the latest version
+    const [VS_TOOLS_PATH] = dirs.reverse()
     if (!VS_TOOLS_PATH) throw new Error('vs tools not found')
     process.env.PATH = VS_TOOLS_PATH + path.delimiter + process.env.PATH
   })
