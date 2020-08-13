@@ -6,38 +6,10 @@
 #include <functional>
 #include <iostream>
 #include <atomic>
+#include <stdexcept>
 #include "../src/main.h"
 
 #define ENSURE_UV(x) assert(x == 0);
-
-// 这里一 free 就崩溃
-// “就一点内存，泄露就泄露了”——jjyyxx
-// “或者 c 处理完以后 notify go”——西格玛
-// “妙哉”——jjyyxx
-// 至于具体是否有效果，之后可以用一些大字符串检验
-
-#define DEFINE_API_SYNC(name) \
-proto_t->Set(isolate, #name, FunctionTemplate::New(isolate, [] (const FunctionCallbackInfo<Value>& args) -> void { \
-	Isolate* isolate = args.GetIsolate(); \
-	Local<Context> ctx = isolate->GetCurrentContext(); \
-	const auto This = args.This(); \
-	void* bot = This->GetAlignedPointerFromInternalField(0); \
-	char* result = name(bot); \
-	args.GetReturnValue().Set(ToJSON(isolate, ctx, result)); \
-	GoFree(result); \
-}))
-
-#define DEFINE_API_SYNC_INT64(name) \
-proto_t->Set(isolate, #name, FunctionTemplate::New(isolate, [] (const FunctionCallbackInfo<Value>& args) -> void { \
-	Isolate* isolate = args.GetIsolate(); \
-	int64_t arg0 = Convert<int64_t>(isolate, args[0]); \
-	Local<Context> ctx = isolate->GetCurrentContext(); \
-	const auto This = args.This(); \
-	void* bot = This->GetAlignedPointerFromInternalField(0); \
-	char* result = name(bot, arg0); \
-	args.GetReturnValue().Set(ToJSON(isolate, ctx, result)); \
-	GoFree(result); \
-}))
 
 namespace ATRI {
 	using v8::Array;
@@ -57,6 +29,48 @@ namespace ATRI {
 	using v8::PropertyCallbackInfo;
 	using v8::String;
 	using v8::Value;
+
+	inline void TypeError(Isolate* isolate, const char* message) {
+		isolate->ThrowException(Exception::TypeError(String::NewFromUtf8(isolate, message).ToLocalChecked()));
+	}
+
+	template<void* F, size_t N, typename... A, size_t... S>
+	inline void _addMethod(Isolate* isolate, Local<ObjectTemplate> tpl, const char* name, std::index_sequence<S...>) {
+		tpl->Set(isolate, name, FunctionTemplate::New(isolate, [](const FunctionCallbackInfo<Value>& args) -> void {
+			Isolate* isolate = args.GetIsolate();
+
+			const auto This = args.This();
+			void* bot = This->GetAlignedPointerFromInternalField(0);
+			// TODO check for pointer
+
+			if (args.Length() < N) {
+				return TypeError(isolate, "missing arguments");
+			}
+
+			char* result;
+			try {
+				result = F(bot, Convert<A>(isolate, args[S])...);
+			} catch (std::invalid_argument& ex) {
+				return TypeError(isolate, ex.what());
+			}
+
+			Local<Context> ctx = isolate->GetCurrentContext();
+			args.GetReturnValue().Set(ToJSON(isolate, ctx, result));
+			// 这里一 free 就崩溃
+			// “就一点内存，泄露就泄露了”——jjyyxx
+			// “或者 c 处理完以后 notify go”——西格玛
+			// “妙哉”——jjyyxx
+			// 至于具体是否有效果，之后可以用一些大字符串检验
+			GoFree(result);
+		}));
+	}
+
+	template<void* F, typename... A>
+	void AddMethod(Isolate* isolate, Local<ObjectTemplate> tpl, const char* name) {
+		constexpr size_t N = sizeof...(A);
+		constexpr auto S = std::make_index_sequence<N>{};
+		_addMethod<F, N, A...>(isolate, tpl, name, S);
+	}
 
 	/* Multi-instance test, not used yet */
 	// class AddonContext
@@ -94,24 +108,24 @@ namespace ATRI {
 	template<typename T>
 	T Convert(Isolate* isolate, Local<Value> value) {
 		if constexpr (std::is_same_v<T, std::string>) {
-			assert(value->IsString());
+			if (!value->IsString()) throw std::invalid_argument("expect string");
 			String::Utf8Value str(isolate, value);
 			return *str;
 		}
 		else if constexpr (std::is_same_v<T, bool>) {
-			assert(value->IsBoolean());
+			if (!value->IsBoolean()) throw std::invalid_argument("expect boolean");
 			return value->BooleanValue(isolate);
 		}
 		else if constexpr (std::is_floating_point_v<T>) {
-			assert(value->IsNumber());
+			if (!value->IsNumber()) throw std::invalid_argument("expect number");
 			return value->NumberValue(isolate->GetCurrentContext()).FromJust();
 		}
 		else if constexpr (std::is_integral_v<T>) {
-			assert(value->IsNumber());
+			if (!value->IsNumber()) throw std::invalid_argument("expect number");
 			return value->IntegerValue(isolate->GetCurrentContext()).FromJust();
 		}
 		else if constexpr (std::is_same_v<T, Local<Function>>) {
-			assert(value->IsFunction());
+			if (!value->IsFunction()) throw std::invalid_argument("expect function");
 			return Local<Function>::Cast(value);
 		}
 	}
@@ -336,10 +350,10 @@ namespace ATRI {
 		proto_t->Set(v8::Symbol::GetToStringTag(isolate), ClientString, static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontEnum | v8::DontDelete));
 		proto_t->Set(isolate, "onPrivateMessage", FunctionTemplate::New(isolate, onPrivateMessage));
 
-		DEFINE_API_SYNC(getFriendList);
-		DEFINE_API_SYNC(getGroupList);
-		DEFINE_API_SYNC_INT64(getGroupInfo);
-		DEFINE_API_SYNC_INT64(getGroupMemberList);
+		AddMethod<getFriendList>(isolate, proto_t, "getFriendList");
+		AddMethod<getGroupList>(isolate, proto_t, "getGroupList");
+		AddMethod<getGroupInfo, int64_t>(isolate, proto_t, "getGroupInfo");
+		AddMethod<getGroupInfo, int64_t>(isolate, proto_t, "getGroupMemberList");
 
 		exports->Set(
 			context,
