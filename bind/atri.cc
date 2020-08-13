@@ -242,6 +242,8 @@ namespace ATRI {
 			delete result;
 
 			Local<Value> argv[1]{ Array::New(isolate, valueArray, length) };
+
+			delete[] valueArray;
 			Local<Function>::New(isolate, work->callback)->Call(ctx, ctx->Global(), 1, argv);
 		}
 
