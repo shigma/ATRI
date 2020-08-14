@@ -12,11 +12,17 @@
         "../../src/main.lib"
       ],
       "conditions": [
-        # ["OS==\"win\"", {
-        #     "ldflags": [
-        #       "/MT"
-        #     ],
-        # }]
+        ["OS==\"win\"", {
+          'msvs_settings': {
+            'VCCLCompilerTool': {
+              'AdditionalOptions': [
+                '/EHsc',
+                '/utf-8',
+                '/std:c++17'
+              ]
+            }
+          }
+        }]
       ]
     },
   ],
