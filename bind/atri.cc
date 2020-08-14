@@ -30,87 +30,123 @@ namespace ATRI {
 	using v8::String;
 	using v8::Value;
 
+	struct CharUtil
+	{
+		String::Utf8Value* str;
+		CharUtil(Isolate* isolate, Local<Value> value): str(new String::Utf8Value(isolate, value)) {}
+
+		operator char* () { return **str; }
+
+		~CharUtil() { delete str; }
+	};
+
+	enum class Pattern
+	{
+		PLAIN,
+		CONSTRUCTOR,
+		INSTANCE_SYNC,
+		INSTANCE_ASYNC,
+		INSTANCE_LISTENER,
+	};
+
 	inline void TypeError(Isolate* isolate, const char* message) {
 		isolate->ThrowException(Exception::TypeError(String::NewFromUtf8(isolate, message).ToLocalChecked()));
 	}
 
-	template<void* F, size_t N, typename... A, size_t... S>
-	inline void _addMethod(Isolate* isolate, Local<ObjectTemplate> tpl, const char* name, std::index_sequence<S...>) {
-		tpl->Set(isolate, name, FunctionTemplate::New(isolate, [](const FunctionCallbackInfo<Value>& args) -> void {
-			Isolate* isolate = args.GetIsolate();
+	template<void* F, Pattern P, size_t N, typename... A, size_t... S>
+	inline void V8CallbackNumbered(const FunctionCallbackInfo<Value>& args, std::index_sequence<S...>) {
+		Isolate* isolate = args.GetIsolate();
+		constexpr size_t REAL_N = (P == Pattern::INSTANCE_ASYNC || P == Pattern::INSTANCE_LISTENER) ? N + 1 : N;
+		if (args.Length() < REAL_N) {
+			return TypeError(isolate, "missing arguments");
+		}
 
-			const auto This = args.This();
-			void* bot = This->GetAlignedPointerFromInternalField(0);
-			// TODO check for pointer
-
-			if (args.Length() < N) {
-				return TypeError(isolate, "missing arguments");
+		if constexpr (P == Pattern::CONSTRUCTOR) {
+			if (!args.IsConstructCall()) {
+				return TypeError(isolate, "Constructor requires 'new'");
 			}
 
-			char* result;
+			void* bot;
 			try {
-				result = F(bot, Convert<A>(isolate, args[S])...);
-			} catch (std::invalid_argument& ex) {
+				bot = reinterpret_cast<void*>(F(std::forward<A>(Convert<A>(isolate, args[S]))...));
+			}
+			catch (std::invalid_argument& ex) {
 				return TypeError(isolate, ex.what());
 			}
 
+			if (bot == nullptr) {
+				return TypeError(isolate, "Constructor requires 'new'");
+			}
+
+			const auto This = args.This();
+			This->SetAlignedPointerInInternalField(0, bot);
+		}
+		else if constexpr (P == Pattern::INSTANCE_SYNC || P == Pattern::INSTANCE_ASYNC || P == Pattern::INSTANCE_LISTENER) {
+			const auto This = args.This();
+			if (This->InternalFieldCount() != 1) {
+				return TypeError(isolate, "Wrong context");
+			}
+			void* bot = This->GetAlignedPointerFromInternalField(0);
+			if (bot == nullptr) {
+				return TypeError(isolate, "Wrong context");
+			}
 			Local<Context> ctx = isolate->GetCurrentContext();
-			args.GetReturnValue().Set(ToJSON(isolate, ctx, result));
-			// 这里一 free 就崩溃
-			// “就一点内存，泄露就泄露了”——jjyyxx
-			// “或者 c 处理完以后 notify go”——西格玛
-			// “妙哉”——jjyyxx
-			// 至于具体是否有效果，之后可以用一些大字符串检验
-			GoFree(result);
-		}));
+
+			if constexpr (P == Pattern::INSTANCE_SYNC) {
+				char* result;
+				try {
+					result = F(bot, std::forward<A>(Convert<A>(isolate, args[S]))...);
+				}
+				catch (std::invalid_argument& ex) {
+					return TypeError(isolate, ex.what());
+				}
+				args.GetReturnValue().Set(ToJSON(isolate, ctx, result));
+				// 这里一 free 就崩溃
+				// “就一点内存，泄露就泄露了”——jjyyxx
+				// “或者 c 处理完以后 notify go”——西格玛
+				// “妙哉”——jjyyxx
+				// 至于具体是否有效果，之后可以用一些大字符串检验
+				GoFree(result);
+			}
+			else {
+				if constexpr (P == Pattern::INSTANCE_ASYNC) {
+					AsyncByteWork* work = new AsyncByteWork(isolate, Convert<Local<Function>>(isolate, args[N]));
+					work->Invoke<F>(bot, std::forward<A>(Convert<A>(isolate, args[S]))...);
+				}
+				else if constexpr (P == Pattern::INSTANCE_LISTENER) {
+					ListenerByteWork* work = new ListenerByteWork(isolate, Convert<Local<Function>>(isolate, args[N]));
+					work->Invoke<F>(bot, std::forward<A>(Convert<A>(isolate, args[S]))...);
+				}
+				else {
+					// NEVER
+					static_assert(false, "Unimplemented");
+				}
+
+				args.GetReturnValue().Set(Undefined(isolate));
+			}
+		}
+		else {
+			static_assert(false, "Unimplemented");
+		}
 	}
 
-	template<void* F, typename... A>
-	void AddMethod(Isolate* isolate, Local<ObjectTemplate> tpl, const char* name) {
+	template<void* F, Pattern P, typename... A>
+	void V8Callback(const FunctionCallbackInfo<Value>& args) {
 		constexpr size_t N = sizeof...(A);
 		constexpr auto S = std::make_index_sequence<N>{};
-		_addMethod<F, N, A...>(isolate, tpl, name, S);
+		V8CallbackNumbered<F, P, N, A...>(args, S);
 	}
 
-	/* Multi-instance test, not used yet */
-	// class AddonContext
-	// {
-	// public:
-	// 	Local<ObjectTemplate> tpl;
-	// public:
-	// 	AddonContext(Isolate* isolate): tpl(ObjectTemplate::New(isolate)) {
-	// 		node::AddEnvironmentCleanupHook(isolate, Dispose, this);
-	// 		tpl->SetAccessor(String::NewFromUtf8(isolate, "t1").ToLocalChecked(), GetPath);
-	// 	}
-	// 	static void GetPath(Local<String> name, const PropertyCallbackInfo<Value>& info) {
-	// 		RequestData* request = UnwrapRequest(info.Holder());
-	// 		const char* path = request->b;
-	// 		info.GetReturnValue().Set(String::NewFromUtf8(info.GetIsolate(), path).ToLocalChecked());
-	// 	}
-	// 	static RequestData* UnwrapRequest(Local<Object> obj) {
-	// 		Local<External> field = Local<External>::Cast(obj->GetInternalField(0));
-	// 		void* ptr = field->Value();
-	// 		return static_cast<RequestData*>(ptr);
-	// 	}
-	// 	~AddonContext() {
-	// 	}
-	// 	static void Dispose(void* arg) {
-	// 		delete static_cast<AddonContext*>(arg);
-	// 	}
-	// private:
-	// };
-
-	std::string convert(Isolate* isolate, Local<String> str) {
-		String::Utf8Value value(isolate, str);
-		return *value;
+	template<void* F, Pattern P, typename... A>
+	inline void AddMethod(Isolate* isolate, Local<ObjectTemplate> tpl, const char* name) {
+		tpl->Set(isolate, name, FunctionTemplate::New(isolate, V8Callback<F, P, A...>));
 	}
 
 	template<typename T>
-	T Convert(Isolate* isolate, Local<Value> value) {
-		if constexpr (std::is_same_v<T, std::string>) {
+	T Convert(Isolate* isolate, Local<Value>&& value) {
+		if constexpr (std::is_same_v<T, CharUtil>) {
 			if (!value->IsString()) throw std::invalid_argument("expect string");
-			String::Utf8Value str(isolate, value);
-			return *str;
+			return { isolate, value };
 		}
 		else if constexpr (std::is_same_v<T, bool>) {
 			if (!value->IsBoolean()) throw std::invalid_argument("expect boolean");
@@ -137,7 +173,7 @@ namespace ATRI {
 	struct AsyncByteWork {
 		uv_async_t request{};
 		v8::Persistent<Function> callback;
-		AsyncByteWork(Isolate* isolate, Local<Function> callback): callback(isolate, callback) {
+		AsyncByteWork(Isolate* isolate, Local<Function> callback) : callback(isolate, callback) {
 			request.data = this;
 			request.close_cb = close_callback_func;
 		}
@@ -147,10 +183,10 @@ namespace ATRI {
 			delete error;
 		}
 
-		template<typename F, typename... Ts>
-		void Invoke(F func, Ts... args) {
+		template<void* F, typename... Ts>
+		void Invoke(Ts... args) {
 			ENSURE_UV(uv_async_init(uv_default_loop(), &this->request, this->node_callback_func));
-			func(args..., go_callback_func, reinterpret_cast<uintptr_t>(this));
+			F(args..., go_callback_func, reinterpret_cast<uintptr_t>(this));
 		}
 
 		void Dispose() {
@@ -218,7 +254,7 @@ namespace ATRI {
 		uv_async_t request{};
 		uv_mutex_t mutex{};
 		v8::Persistent<Function> callback;
-		ListenerByteWork(Isolate* isolate, Local<Function> callback) : callback(isolate, callback) {
+		ListenerByteWork(Isolate* isolate, Local<Function> callback): callback(isolate, callback) {
 			request.data = this;
 			request.close_cb = close_callback_func;
 		}
@@ -227,12 +263,12 @@ namespace ATRI {
 			delete buffer;
 		}
 
-		template<typename F, typename... Ts>
-		void Invoke(F func, Ts... args) {
+		template<void* F, typename... Ts>
+		void Invoke(Ts... args) {
 			this->replace_buffer();
 			ENSURE_UV(uv_async_init(uv_default_loop(), &this->request, this->node_callback_func));
 			ENSURE_UV(uv_mutex_init(&this->mutex));
-			func(args..., go_callback_func, reinterpret_cast<uintptr_t>(this));
+			F(args..., go_callback_func, reinterpret_cast<uintptr_t>(this));
 		}
 
 		void Dispose() {
@@ -305,60 +341,31 @@ namespace ATRI {
 		}
 	};
 
-	void instantiate(const FunctionCallbackInfo<Value>& args) {
-		assert(args.IsConstructCall());
-		
-		Isolate* isolate = args.GetIsolate();
-		Local<Context> ctx = isolate->GetCurrentContext();
-
-		auto uid = Convert<int64_t>(isolate, args[0]);
-		auto psw = Convert<std::string>(isolate, args[1]);
-		void* bot = reinterpret_cast<void*>(_login(uid, const_cast<char*>(psw.c_str())));
-		
-		assert(bot);
-
-		const auto This = args.This();
-		This->SetAlignedPointerInInternalField(0, bot);
-	}
-
-	void onPrivateMessage(const FunctionCallbackInfo<Value>& args) {
-		Isolate* isolate = args.GetIsolate();
-		Local<Context> ctx = isolate->GetCurrentContext();
-		const auto This = args.This();
-		void* bot = This->GetAlignedPointerFromInternalField(0);
-
-		auto callback = Convert<Local<Function>>(isolate, args[0]);
-		ListenerByteWork* work = new ListenerByteWork(isolate, callback);
-		work->Invoke(_onPrivateMessage, bot);
-
-		args.GetReturnValue().Set(Undefined(isolate));
-	}
-
 	void init(Local<Object> exports, Local<Value> module, Local<Context> context) {
 		Isolate* isolate = context->GetIsolate();
-		// AddonContext* addon = new AddonContext(isolate);
-		// Local<External> external = External::New(isolate, addon);
 
-		auto t = FunctionTemplate::New(isolate, instantiate);
+		// Client, on constructor
+		auto Client = FunctionTemplate::New(isolate, V8Callback<_login, Pattern::CONSTRUCTOR, int64_t, CharUtil>);
 		auto ClientString = String::NewFromUtf8(isolate, "Client").ToLocalChecked();
-		t->SetClassName(ClientString);
+		Client->SetClassName(ClientString);
 
-		auto inst_t = t->InstanceTemplate();
+		// Client, on instance
+		auto inst_t = Client->InstanceTemplate();
 		inst_t->SetInternalFieldCount(1);
 
-		auto proto_t = t->PrototypeTemplate();
+		// Client, on prototype
+		auto proto_t = Client->PrototypeTemplate();
 		proto_t->Set(v8::Symbol::GetToStringTag(isolate), ClientString, static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontEnum | v8::DontDelete));
-		proto_t->Set(isolate, "onPrivateMessage", FunctionTemplate::New(isolate, onPrivateMessage));
-
-		AddMethod<getFriendList>(isolate, proto_t, "getFriendList");
-		AddMethod<getGroupList>(isolate, proto_t, "getGroupList");
-		AddMethod<getGroupInfo, int64_t>(isolate, proto_t, "getGroupInfo");
-		AddMethod<getGroupInfo, int64_t>(isolate, proto_t, "getGroupMemberList");
+		AddMethod<_onPrivateMessage, Pattern::INSTANCE_LISTENER>(isolate, proto_t, "onPrivateMessage");
+		AddMethod<getFriendList, Pattern::INSTANCE_SYNC>(isolate, proto_t, "getFriendList");
+		AddMethod<getGroupList, Pattern::INSTANCE_SYNC>(isolate, proto_t, "getGroupList");
+		AddMethod<getGroupInfo, Pattern::INSTANCE_SYNC, int64_t>(isolate, proto_t, "getGroupInfo");
+		AddMethod<getGroupMemberList, Pattern::INSTANCE_SYNC, int64_t>(isolate, proto_t, "getGroupMemberList");
 
 		exports->Set(
 			context,
 			ClientString,
-			t->GetFunction(context).ToLocalChecked()
+			Client->GetFunction(context).ToLocalChecked()
 		);
 	}
 }
