@@ -79,10 +79,10 @@ func _login(botC unsafe.Pointer, cb C.ByteCallback, ctx C.uintptr_t) {
 	}()
 }
 
-//export _onPrivateMessage
-func _onPrivateMessage(botC unsafe.Pointer, cb C.ByteCallback, ctx C.uintptr_t) {
+//export onEvent
+func onEvent(botC unsafe.Pointer, cb C.ByteCallback, ctx C.uintptr_t) {
 	bot := (*CQBot)(botC)
-	bot.OnPrivateMessage(func(msg MSG) {
+	bot.onEvent(func(msg MSG) {
 		b, _ := json.Marshal(msg)
 		C.InvokeByteCallback(cb, ctx, unsafe.Pointer(&b[0]), nil, C.size_t(len(b)))
 	})

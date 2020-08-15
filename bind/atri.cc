@@ -31,7 +31,7 @@ namespace ATRI {
 		proto_t->Set(v8::Symbol::GetToStringTag(isolate), ClientString, static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontEnum | v8::DontDelete));
 		AddMethod<_login, Pattern::INSTANCE_ASYNC>(isolate, proto_t, "login");
 		AddMethod<_sendPrivateMessage, Pattern::INSTANCE_ASYNC, int64_t, CharUtil>(isolate, proto_t, "sendPrivateMessage");
-		AddMethod<_onPrivateMessage, Pattern::INSTANCE_LISTENER>(isolate, proto_t, "onPrivateMessage");
+		AddMethod<onEvent, Pattern::INSTANCE_LISTENER>(isolate, proto_t, "onEvent");
 		AddMethod<getFriendList, Pattern::INSTANCE_SYNC>(isolate, proto_t, "getFriendList");
 		AddMethod<getGroupList, Pattern::INSTANCE_SYNC>(isolate, proto_t, "getGroupList");
 		AddMethod<getGroupInfo, Pattern::INSTANCE_SYNC, int64_t>(isolate, proto_t, "getGroupInfo");

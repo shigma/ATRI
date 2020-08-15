@@ -79,7 +79,7 @@ func (bot *CQBot) Login() bool {
 	return true
 }
 
-func (bot *CQBot) OnPrivateMessage(callback func(MSG)) {
+func (bot *CQBot) onEvent(callback func(MSG)) {
 	bot.Client.OnPrivateMessage(func(c *client.QQClient, m *message.PrivateMessage) {
 		cqm := ToStringMessage(m.Elements, 0, true)
 		callback(MSG{
@@ -100,7 +100,84 @@ func (bot *CQBot) OnPrivateMessage(callback func(MSG)) {
 				"age":      0,
 			},
 		})
-		log.Infof("收到好友 %v(%v) 的消息: %v", m.Sender.DisplayName(), m.Sender.Uin, cqm)
+	})
+
+	bot.Client.OnJoinGroup(func(c *client.QQClient, group *client.GroupInfo) {
+		callback(MSG{
+			"post_type":   "notice",
+			"notice_type": "group_increase",
+			"group_id":    group.Code,
+			"operator_id": 0,
+			"self_id":     bot.Client.Uin,
+			"sub_type":    "approve",
+			"time":        time.Now().Unix(),
+			"user_id":     c.Uin,
+		})
+	})
+
+	bot.Client.OnGroupMemberJoined(func(c *client.QQClient, e *client.MemberJoinGroupEvent) {
+		callback(MSG{
+			"post_type":   "notice",
+			"notice_type": "group_increase",
+			"group_id":    e.Group.Code,
+			"operator_id": 0,
+			"self_id":     bot.Client.Uin,
+			"sub_type":    "approve",
+			"time":        time.Now().Unix(),
+			"user_id":     e.Member.Uin,
+		})
+	})
+
+	bot.Client.OnLeaveGroup(func(c *client.QQClient, e *client.GroupLeaveEvent) {
+		callback(MSG{
+			"post_type":   "notice",
+			"notice_type": "group_decrease",
+			"group_id":    e.Group.Code,
+			"operator_id": func() int64 {
+				if e.Operator != nil {
+					return e.Operator.Uin
+				}
+				return c.Uin
+			}(),
+			"self_id": bot.Client.Uin,
+			"sub_type": func() string {
+				if e.Operator != nil {
+					if c.Uin == bot.Client.Uin {
+						return "kick_me"
+					}
+					return "kick"
+				}
+				return "leave"
+			}(),
+			"time":    time.Now().Unix(),
+			"user_id": c.Uin,
+		})
+	})
+
+	bot.Client.OnGroupMemberLeaved(func(c *client.QQClient, e *client.MemberLeaveGroupEvent) {
+		callback(MSG{
+			"post_type":   "notice",
+			"notice_type": "group_decrease",
+			"group_id":    e.Group.Code,
+			"operator_id": func() int64 {
+				if e.Operator != nil {
+					return e.Operator.Uin
+				}
+				return e.Member.Uin
+			}(),
+			"self_id": bot.Client.Uin,
+			"sub_type": func() string {
+				if e.Operator != nil {
+					if e.Member.Uin == bot.Client.Uin {
+						return "kick_me"
+					}
+					return "kick"
+				}
+				return "leave"
+			}(),
+			"time":    time.Now().Unix(),
+			"user_id": e.Member.Uin,
+		})
 	})
 }
 
