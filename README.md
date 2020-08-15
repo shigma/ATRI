@@ -2,15 +2,14 @@
 
 アトリは、高性能ですから!
 
-```bat
-ts-node tools/build
-node ./test.js
-```
+## Roadmap
 
-## roadmap
 - [x] 前期调研，确认可行性
-- [ ] 编写自动化脚本和工具
-- [ ] 整理接口
+- [ ] 确定接口，编写实现
+  - [ ] 入口（构造函数 + 绑定回调 + 账号登录）
+  - [ ] 事件（Go 包装成 JSON，通过单一回调函数进行传递）
+  - [ ] API（Go 实现成回调函数，TS 中转化为 Promise）
+- [ ] 完成全平台编译
 
 ## 基本思路
 - 将Go方法最外层使用goroutine包装，将阻塞方法转化为callback型异步方法，通过`uv_async_init`和`uv_async_send`进行对接，使goroutine能够与uvlib协调使用3
