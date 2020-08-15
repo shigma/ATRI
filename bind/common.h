@@ -143,6 +143,17 @@ namespace ATRI {
 				}
 			}
 		}
+		else if constexpr (P == Pattern::PLAIN) {
+			char* result;
+			try {
+				result = F(std::forward<A>(Convert<A>(isolate, args[S]))...);
+			}
+			catch (std::invalid_argument& ex) {
+				return TypeError(isolate, ex.what());
+			}
+			args.GetReturnValue().Set(ToJSON(isolate, isolate->GetCurrentContext(), result));
+			GoFree(result);
+		}
 		else {
 			static_assert(false, "Unimplemented");
 		}
@@ -156,7 +167,7 @@ namespace ATRI {
 	}
 
 	template<void* F, Pattern P, typename... A>
-	inline void AddMethod(Isolate* isolate, Local<ObjectTemplate> tpl, const char* name) {
+	inline void AddMethod(Isolate* isolate, Local<v8::Template> tpl, const char* name) {
 		tpl->Set(isolate, name, FunctionTemplate::New(isolate, V8Callback<F, P, A...>));
 	}
 
@@ -164,6 +175,9 @@ namespace ATRI {
 	inline T Convert(Isolate* isolate, Local<Value>&& value) {
 		if constexpr (std::is_same_v<T, CharUtil>) {
 			if (!value->IsString()) throw std::invalid_argument("expect string");
+			return { isolate, value };
+		}
+		else if constexpr (std::is_same_v<T, JsonUtil>) {
 			return { isolate, value };
 		}
 		else if constexpr (std::is_same_v<T, bool>) {

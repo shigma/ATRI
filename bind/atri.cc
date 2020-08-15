@@ -17,9 +17,10 @@ namespace ATRI {
 		Isolate* isolate = context->GetIsolate();
 
 		// Client, on constructor
-		auto Client = FunctionTemplate::New(isolate, V8Callback<_login, Pattern::CONSTRUCTOR, int64_t, CharUtil>);
+		auto Client = FunctionTemplate::New(isolate, V8Callback<_newCQBot, Pattern::CONSTRUCTOR, int64_t, CharUtil>);
 		auto ClientString = String::NewFromUtf8(isolate, "Client").ToLocalChecked();
 		Client->SetClassName(ClientString);
+		AddMethod<_setupDevice, Pattern::PLAIN, JsonUtil>(isolate, Client, "setupDevice");
 
 		// Client, on instance
 		auto inst_t = Client->InstanceTemplate();
@@ -28,8 +29,9 @@ namespace ATRI {
 		// Client, on prototype
 		auto proto_t = Client->PrototypeTemplate();
 		proto_t->Set(v8::Symbol::GetToStringTag(isolate), ClientString, static_cast<v8::PropertyAttribute>(v8::ReadOnly | v8::DontEnum | v8::DontDelete));
-		AddMethod<_onPrivateMessage, Pattern::INSTANCE_LISTENER>(isolate, proto_t, "onPrivateMessage");
+		AddMethod<_login, Pattern::INSTANCE_ASYNC>(isolate, proto_t, "login");
 		AddMethod<_sendPrivateMessage, Pattern::INSTANCE_ASYNC, int64_t, CharUtil>(isolate, proto_t, "sendPrivateMessage");
+		AddMethod<_onPrivateMessage, Pattern::INSTANCE_LISTENER>(isolate, proto_t, "onPrivateMessage");
 		AddMethod<getFriendList, Pattern::INSTANCE_SYNC>(isolate, proto_t, "getFriendList");
 		AddMethod<getGroupList, Pattern::INSTANCE_SYNC>(isolate, proto_t, "getGroupList");
 		AddMethod<getGroupInfo, Pattern::INSTANCE_SYNC, int64_t>(isolate, proto_t, "getGroupInfo");
