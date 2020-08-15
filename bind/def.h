@@ -1,5 +1,5 @@
-#ifndef GO_CGO_DEF_TEST_H
-#define GO_CGO_DEF_TEST_H
+#ifndef GO_CGO_ATRI_DEF_H
+#define GO_CGO_ATRI_DEF_H
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>

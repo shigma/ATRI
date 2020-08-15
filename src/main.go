@@ -113,6 +113,68 @@ func _onPrivateMessage(botC unsafe.Pointer, cb C.ByteCallback, ctx C.uintptr_t) 
 	})
 }
 
+type GenericError struct {
+	Message string
+	Detail  interface{}
+}
+
+func errorHandler(cb C.ByteCallback, ctx C.uintptr_t) {
+	if e := recover(); e != nil {
+		var b []byte
+		var jsonErr error
+		switch err := e.(type) {
+		case error:
+			b, jsonErr = json.Marshal(GenericError{
+				Message: err.Error(),
+				Detail:  err,
+			})
+			if jsonErr != nil {
+				b, _ = json.Marshal(GenericError{
+					Message: err.Error(),
+				})
+			}
+		case string:
+			b, _ = json.Marshal(GenericError{
+				Message: err,
+			})
+		default:
+			b, jsonErr = json.Marshal(GenericError{
+				Message: "UNKNOWN",
+				Detail:  err,
+			})
+			if jsonErr != nil {
+				b, _ = json.Marshal(GenericError{
+					Message: "UNKNOWN",
+				})
+			}
+		}
+		C.InvokeByteCallback(cb, ctx, nil, unsafe.Pointer(&b[0]), C.size_t(len(b)))
+	}
+}
+
+//export _sendPrivateMessage
+func _sendPrivateMessage(botC unsafe.Pointer, targetC C.longlong, contentC *C.char, cb C.ByteCallback, ctx C.uintptr_t) {
+	bot := (*CQBot)(botC)
+	target := int64(targetC)
+	content := C.GoString(contentC)
+
+	go func() {
+		defer errorHandler(cb, ctx)
+		resp := bot.Client.SendPrivateMessage(target, &message.SendingMessage{
+			Elements: []message.IMessageElement{
+				&message.TextElement{
+					Content: content,
+				},
+			},
+		})
+		b, err := json.Marshal(resp)
+		if err != nil {
+			panic(err)
+		}
+		C.InvokeByteCallback(cb, ctx, unsafe.Pointer(&b[0]), nil, C.size_t(len(b)))
+	}()
+}
+
 type CQBot struct {
 	Client *client.QQClient
 
