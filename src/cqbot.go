@@ -102,6 +102,33 @@ func (bot *CQBot) onEvent(callback func(MSG)) {
 		})
 	})
 
+	bot.Client.OnFriendMessageRecalled(func(c *client.QQClient, e *client.FriendMessageRecalledEvent) {
+		f := c.FindFriend(e.FriendUin)
+		gid := ToGlobalId(e.FriendUin, e.MessageId)
+		callback(MSG{
+			"post_type":   "notice",
+			"notice_type": "friend_recall",
+			"self_id":     c.Uin,
+			"user_id":     f.Uin,
+			"time":        e.Time,
+			"message_id":  gid,
+		})
+	})
+
+	bot.Client.OnGroupMessageRecalled(func(c *client.QQClient, e *client.GroupMessageRecalledEvent) {
+		gid := ToGlobalId(e.GroupCode, e.MessageId)
+		callback(MSG{
+			"post_type":   "notice",
+			"group_id":    e.GroupCode,
+			"notice_type": "group_recall",
+			"self_id":     c.Uin,
+			"user_id":     e.AuthorUin,
+			"operator_id": e.OperatorUin,
+			"time":        e.Time,
+			"message_id":  gid,
+		})
+	})
+
 	bot.Client.OnJoinGroup(func(c *client.QQClient, group *client.GroupInfo) {
 		callback(MSG{
 			"post_type":   "notice",
@@ -177,6 +204,42 @@ func (bot *CQBot) onEvent(callback func(MSG)) {
 			}(),
 			"time":    time.Now().Unix(),
 			"user_id": e.Member.Uin,
+		})
+	})
+
+	bot.Client.OnGroupMuted(func(c *client.QQClient, e *client.GroupMuteEvent) {
+		callback(MSG{
+			"post_type":   "notice",
+			"duration":    e.Time,
+			"group_id":    e.GroupCode,
+			"notice_type": "group_ban",
+			"operator_id": e.OperatorUin,
+			"self_id":     c.Uin,
+			"user_id":     e.TargetUin,
+			"time":        time.Now().Unix(),
+			"sub_type": func() string {
+				if e.Time > 0 {
+					return "ban"
+				}
+				return "lift_ban"
+			}(),
+		})
+	})
+
+	bot.Client.OnGroupMemberPermissionChanged(func(c *client.QQClient, e *client.MemberPermissionChangedEvent) {
+		callback(MSG{
+			"post_type":   "notice",
+			"notice_type": "group_admin",
+			"sub_type": func() string {
+				if e.NewPermission == client.Administrator {
+					return "set"
+				}
+				return "unset"
+			}(),
+			"group_id": e.Group.Code,
+			"user_id":  e.Member.Uin,
+			"time":     time.Now().Unix(),
+			"self_id":  c.Uin,
 		})
 	})
 }
