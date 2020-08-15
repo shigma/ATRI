@@ -37,8 +37,8 @@ namespace ATRI {
 		String::Utf8Value* str;
 		CharUtil(Isolate* isolate, Local<Value> value) : str(new String::Utf8Value(isolate, value)) {}
 		operator char* () { return **str; }
-		~CharUtil() { 
-			// delete str;
+		~CharUtil() {
+			delete str;
 		}
 	};
 
@@ -48,8 +48,8 @@ namespace ATRI {
 		String::Utf8Value* str;
 		JsonUtil(Isolate* isolate, Local<Value> value) : str(new String::Utf8Value(isolate, v8::JSON::Stringify(isolate->GetCurrentContext(), value).ToLocalChecked())) {}
 		operator char* () { return **str; }
-		~JsonUtil() { 
-			// delete str;
+		~JsonUtil() {
+			delete str;
 		}
 	};
 
@@ -202,7 +202,7 @@ namespace ATRI {
 		}
 
 		template<void* F, typename... Ts>
-		void Invoke(Ts... args) {
+		void Invoke(Ts&&... args) {
 			ENSURE_UV(uv_async_init(uv_default_loop(), &this->request, this->node_callback_func));
 			F(args..., go_callback_func, reinterpret_cast<uintptr_t>(this));
 		}
@@ -282,7 +282,7 @@ namespace ATRI {
 		}
 
 		template<void* F, typename... Ts>
-		void Invoke(Ts... args) {
+		void Invoke(Ts&&... args) {
 			this->replace_buffer();
 			ENSURE_UV(uv_async_init(uv_default_loop(), &this->request, this->node_callback_func));
 			ENSURE_UV(uv_mutex_init(&this->mutex));
