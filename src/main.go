@@ -109,6 +109,19 @@ func _sendPrivateMessage(botC unsafe.Pointer, target int64, contentC *C.char, cb
 	}()
 }
 
+//export _sendGroupMessage
+func _sendGroupMessage(botC unsafe.Pointer, target int64, contentC *C.char, cb C.ByteCallback, ctx C.uintptr_t) {
+	bot := (*CQBot)(botC)
+	content := C.GoString(contentC)
+
+	go func() {
+		defer errorHandler(cb, ctx)
+		resp := bot.SendGroupMessage(target, content)
+		b, _ := json.Marshal(resp)
+		C.InvokeByteCallback(cb, ctx, unsafe.Pointer(&b[0]), nil, C.size_t(len(b)))
+	}()
+}
+
 //export getFriendList
 func getFriendList(botC unsafe.Pointer) *C.char {
 	bot := (*CQBot)(botC)

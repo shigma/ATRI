@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"io/ioutil"
+	"math/rand"
 	"os"
 	"strconv"
 	"strings"
@@ -98,7 +99,6 @@ func (bot *CQBot) LoginInteractive() bool {
 
 func (bot *CQBot) onEvent(callback func(MSG)) {
 	bot.Client.OnPrivateMessage(func(c *client.QQClient, m *message.PrivateMessage) {
-		bot.checkMedia(m.Elements)
 		cqm := ToStringMessage(m.Elements, 0, true)
 		callback(MSG{
 			"post_type":    "message",
@@ -121,7 +121,6 @@ func (bot *CQBot) onEvent(callback func(MSG)) {
 	})
 
 	bot.Client.OnGroupMessage(func(c *client.QQClient, m *message.GroupMessage) {
-		bot.checkMedia(m.Elements)
 		for _, elem := range m.Elements {
 			if file, ok := elem.(*message.GroupFileElement); ok {
 				callback(MSG{
@@ -198,7 +197,6 @@ func (bot *CQBot) onEvent(callback func(MSG)) {
 	})
 
 	bot.Client.OnTempMessage(func(c *client.QQClient, m *message.TempMessage) {
-		bot.checkMedia(m.Elements)
 		cqm := ToStringMessage(m.Elements, 0, true)
 		bot.tempMsgCache.Store(m.Sender.Uin, m.GroupCode)
 		callback(MSG{
@@ -439,14 +437,99 @@ func (bot *CQBot) onEvent(callback func(MSG)) {
 	})
 }
 
-func (bot *CQBot) SendPrivateMessage(target int64, content string) *message.PrivateMessage {
-	return bot.Client.SendPrivateMessage(target, &message.SendingMessage{
-		Elements: []message.IMessageElement{
-			&message.TextElement{
-				Content: content,
-			},
-		},
-	})
+func (bot *CQBot) _SendPrivateMessage(target int64, m *message.SendingMessage) int32 {
+	var newElem []message.IMessageElement
+	for _, elem := range m.Elements {
+		if i, ok := elem.(*message.ImageElement); ok {
+			fm, err := bot.Client.UploadPrivateImage(target, i.Data)
+			if err != nil {
+				log.Warnf("警告: 私聊 %v 消息图片上传失败.", target)
+				continue
+			}
+			newElem = append(newElem, fm)
+			continue
+		}
+		newElem = append(newElem, elem)
+	}
+	m.Elements = newElem
+	var id int32
+	if bot.Client.FindFriend(target) != nil {
+		id = bot.Client.SendPrivateMessage(target, m).Id
+	} else {
+		if code, ok := bot.tempMsgCache.Load(target); ok {
+			id = bot.Client.SendTempMessage(code.(int64), target, m).Id
+		} else {
+			return -1
+		}
+	}
+	return ToGlobalId(target, id)
+}
+
+func (bot *CQBot) SendPrivateMessage(userId int64, content string) MSG {
+	elem := bot.ConvertStringMessage(content, false)
+	mid := bot._SendPrivateMessage(userId, &message.SendingMessage{Elements: elem})
+	if mid == -1 {
+		return nil
+	}
+	return MSG{"message_id": mid}
+}
+
+func (bot *CQBot) _SendGroupMessage(groupId int64, m *message.SendingMessage) int32 {
+	var newElem []message.IMessageElement
+	for _, elem := range m.Elements {
+		if i, ok := elem.(*message.ImageElement); ok {
+			_, _ = bot.Client.UploadGroupImage(int64(rand.Intn(11451419)), i.Data)
+			gm, err := bot.Client.UploadGroupImage(groupId, i.Data)
+			if err != nil {
+				log.Warnf("警告: 群 %v 消息图片上传失败: %v", groupId, err)
+				continue
+			}
+			newElem = append(newElem, gm)
+			continue
+		}
+		if i, ok := elem.(*message.VoiceElement); ok {
+			gv, err := bot.Client.UploadGroupPtt(groupId, i.Data)
+			if err != nil {
+				log.Warnf("警告: 群 %v 消息语音上传失败: %v", groupId, err)
+				continue
+			}
+			newElem = append(newElem, gv)
+			continue
+		}
+		newElem = append(newElem, elem)
+	}
+	m.Elements = newElem
+	bot.Client.SendGroupMessage(groupId, m)
+	// return bot.InsertGroupMessage(ret)
+	return 0
+}
+
+func (bot *CQBot) SendGroupMessage(groupId int64, i interface{}) MSG {
+	var str string
+	if s, ok := i.(string); ok {
+		str = s
+	}
+	if str == "" {
+		return nil
+	}
+	elem := bot.ConvertStringMessage(str, true)
+	// fix at display
+	for _, e := range elem {
+		if at, ok := e.(*message.AtElement); ok && at.Target != 0 {
+			at.Display = "@" + func() string {
+				mem := bot.Client.FindGroup(groupId).FindMember(at.Target)
+				if mem != nil {
+					return mem.DisplayName()
+				}
+				return strconv.FormatInt(at.Target, 10)
+			}()
+		}
+	}
+	mid := bot._SendGroupMessage(groupId, &message.SendingMessage{Elements: elem})
+	if mid == -1 {
+		return nil
+	}
+	return MSG{"message_id": mid}
 }
 
 // GetGroupMemberList
@@ -530,46 +613,4 @@ func (bot *CQBot) GetFriendList() []MSG {
 		})
 	}
 	return fs
-}
-
-func (bot *CQBot) checkMedia(e []message.IMessageElement) {
-	// TODO
-	// for _, elem := range e {
-	// 	switch i := elem.(type) {
-	// 	case *message.ImageElement:
-	// 		filename := hex.EncodeToString(i.Md5) + ".image"
-	// 		if !global.PathExists(path.Join(global.IMAGE_PATH, filename)) {
-	// 			_ = ioutil.WriteFile(path.Join(global.IMAGE_PATH, filename), binary.NewWriterF(func(w *binary.Writer) {
-	// 				w.Write(i.Md5)
-	// 				w.WriteUInt32(uint32(i.Size))
-	// 				w.WriteString(i.Filename)
-	// 				w.WriteString(i.Url)
-	// 			}), 0644)
-	// 		}
-	// 		i.Filename = filename
-	// 	case *message.VoiceElement:
-	// 		i.Name = strings.ReplaceAll(i.Name, "{", "")
-	// 		i.Name = strings.ReplaceAll(i.Name, "}", "")
-	// 		if !global.PathExists(path.Join(global.VOICE_PATH, i.Name)) {
-	// 			b, err := global.GetBytes(i.Url)
-	// 			if err != nil {
-	// 				log.Warnf("语音文件 %v 下载失败: %v", i.Name, err)
-	// 				continue
-	// 			}
-	// 			_ = ioutil.WriteFile(path.Join(global.VOICE_PATH, i.Name), b, 0644)
-	// 		}
-	// 	case *message.ShortVideoElement:
-	// 		filename := hex.EncodeToString(i.Md5) + ".video"
-	// 		if !global.PathExists(path.Join(global.VIDEO_PATH, filename)) {
-	// 			_ = ioutil.WriteFile(path.Join(global.VIDEO_PATH, filename), binary.NewWriterF(func(w *binary.Writer) {
-	// 				w.Write(i.Md5)
-	// 				w.WriteUInt32(uint32(i.Size))
-	// 				w.WriteString(i.Name)
-	// 				w.Write(i.Uuid)
-	// 			}), 0644)
-	// 		}
-	// 		i.Name = filename
-	// 		i.Url = bot.Client.GetShortVideoUrl(i.Uuid, i.Md5)
-	// 	}
-	// }
 }

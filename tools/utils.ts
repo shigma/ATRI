@@ -19,7 +19,7 @@ export function step<T>(text: string, callback: () => Promise<T>): Promise<T> {
   const timestamp = Date.now()
   spinner.start(text)
   return callback().then((result) => {
-    spinner.text += chalk.green` (+${ms(Date.now() - timestamp)})`
+    spinner.text += chalk.green(` (+${ms(Date.now() - timestamp)})`)
     spinner.succeed()
     return result
   }, (err) => {

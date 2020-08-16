@@ -32,6 +32,7 @@ namespace ATRI {
 		AddMethod<_login, Pattern::INSTANCE_ASYNC>(isolate, proto_t, "login");
 		AddMethod<_loginInteractive, Pattern::INSTANCE_SYNC>(isolate, proto_t, "loginSync");
 		AddMethod<_sendPrivateMessage, Pattern::INSTANCE_ASYNC, int64_t, CharUtil>(isolate, proto_t, "sendPrivateMessage");
+		AddMethod<_sendGroupMessage, Pattern::INSTANCE_ASYNC, int64_t, CharUtil>(isolate, proto_t, "sendGroupMessage");
 		AddMethod<onEvent, Pattern::INSTANCE_LISTENER>(isolate, proto_t, "onEvent");
 		AddMethod<getFriendList, Pattern::INSTANCE_SYNC>(isolate, proto_t, "getFriendList");
 		AddMethod<getGroupList, Pattern::INSTANCE_SYNC>(isolate, proto_t, "getGroupList");
