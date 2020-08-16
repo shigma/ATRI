@@ -52,7 +52,7 @@ func (bot *CQBot) Login() bool {
 	Check(cli.ReloadFriendList())
 	log.Infof("共加载 %v 个好友.", len(cli.FriendList))
 	log.Infof("开始加载群列表...")
-	Check(cli.ReloadGroupList())
+	Check(cli.ReloadGroupList(true))
 	log.Infof("共加载 %v 个群.", len(cli.GroupList))
 	log.Infof("登录成功: %v", cli.Nickname)
 	return true

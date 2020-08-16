@@ -1,4 +1,3 @@
-import { _exec } from "./utils"
 import compile from "./compile"
 import bind from "./bind"
 
