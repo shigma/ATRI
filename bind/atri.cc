@@ -39,11 +39,11 @@ namespace ATRI {
 		AddMethod<getGroupInfo, Pattern::INSTANCE_SYNC, int64_t>(isolate, proto_t, "getGroupInfo");
 		AddMethod<getGroupMemberList, Pattern::INSTANCE_SYNC, int64_t>(isolate, proto_t, "getGroupMemberList");
 		
-		exports->Set(
+		WRAP_UNUSED(exports->Set(
 			context,
 			ClientString,
 			Client->GetFunction(context).ToLocalChecked()
-		);
+		));
 	}
 }
 

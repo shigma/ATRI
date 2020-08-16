@@ -1,15 +1,16 @@
 {
-  "dll_files" : [
-    "../src/main.dll"
+  "conditions": [
+    ["OS==\"win\"", {
+      "dll_files" : [
+        "../src/main.dll"
+      ],
+    }]
   ],
   "targets": [
     {
       "target_name": "atri",
       "sources": [
         "atri.cc"
-      ],
-      "libraries": [
-        "../../src/main.lib"
       ],
       "conditions": [
         ["OS==\"win\"", {
@@ -21,7 +22,19 @@
                 '/std:c++17'
               ]
             }
-          }
+          },
+          "libraries": [
+            "../../src/main.lib"
+          ]
+        }],
+        ["OS==\"linux\"", {
+          "libraries": [
+            "../../src/main.a"
+          ],
+          "cflags_cc": [
+            "-std=c++17",
+            "-fexceptions"
+          ]
         }]
       ]
     },

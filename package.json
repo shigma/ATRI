@@ -7,7 +7,8 @@
   "license": "AGPL-3.0-only",
   "scripts": {
     "compile": "ts-node tools/compile src/main",
-    "bind": "ts-node tools/bind src/main bind"
+    "bind": "ts-node tools/bind src/main bind",
+    "build:linux": "sh ./tools/build_linux.sh"
   },
   "devDependencies": {
     "@types/ms": "^0.7.31",

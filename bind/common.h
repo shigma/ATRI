@@ -11,6 +11,8 @@
 #include <stdexcept>
 #define ENSURE_UV(x) assert(x == 0);
 
+#define WRAP_UNUSED(expr) static_cast<void>(expr)
+
 namespace ATRI {
 	using v8::Array;
 	using v8::Exception;
@@ -64,17 +66,220 @@ namespace ATRI {
 		DESTRUCTOR // TBD
 	};
 
-	template<void* ERR>
+	template<auto ERR>
 	inline void V8Error(Isolate* isolate, const char* message) {
 		isolate->ThrowException(ERR(String::NewFromUtf8(isolate, message).ToLocalChecked()));
 	}
 	constexpr auto TypeError = V8Error<Exception::TypeError>;
 
-	template<void* F, Pattern P, size_t N, typename... A, size_t... S>
+	template<typename T>
+	inline T Convert(Isolate* isolate, Local<Value>&& value) {
+		if constexpr (std::is_same_v<T, CharUtil>) {
+			if (!value->IsString()) throw std::invalid_argument("expect string");
+			return { isolate, value };
+		}
+		else if constexpr (std::is_same_v<T, JsonUtil>) {
+			return { isolate, value };
+		}
+		else if constexpr (std::is_same_v<T, bool>) {
+			if (!value->IsBoolean()) throw std::invalid_argument("expect boolean");
+			return value->BooleanValue(isolate);
+		}
+		else if constexpr (std::is_floating_point_v<T>) {
+			if (!value->IsNumber()) throw std::invalid_argument("expect number");
+			return value->NumberValue(isolate->GetCurrentContext()).FromJust();
+		}
+		else if constexpr (std::is_integral_v<T>) {
+			if (!value->IsNumber()) throw std::invalid_argument("expect number");
+			return value->IntegerValue(isolate->GetCurrentContext()).FromJust();
+		}
+		else if constexpr (std::is_same_v<T, Local<Function>>) {
+			if (!value->IsFunction()) throw std::invalid_argument("expect function");
+			return Local<Function>::Cast(value);
+		}
+	}
+
+	Local<Value> ToJSON(Isolate* isolate, Local<Context> context, char* string) {
+		return v8::JSON::Parse(context, String::NewFromUtf8(isolate, string).ToLocalChecked()).ToLocalChecked();
+	}
+
+	struct AsyncByteWork {
+		uv_async_t request{};
+		v8::Persistent<Promise::Resolver> resolver;
+		AsyncByteWork(Isolate* isolate, Local<Promise::Resolver> resolver) : resolver(isolate, resolver) {
+			request.data = this;
+			request.close_cb = close_callback_func;
+		}
+
+		~AsyncByteWork() {
+			delete result;
+			delete error;
+		}
+
+		template<auto F, typename... Ts>
+		void Invoke(Ts&&... args) {
+			ENSURE_UV(uv_async_init(uv_default_loop(), &this->request, this->node_callback_func));
+			F(args..., go_callback_func, reinterpret_cast<uintptr_t>(this));
+		}
+
+		void Dispose() {
+			this->resolver.Reset();
+			uv_close((uv_handle_t*)&request, NULL);
+		}
+
+		char* error = nullptr;
+		char* result = nullptr;
+		size_t length = -1;
+		std::atomic_flag called = ATOMIC_FLAG_INIT;
+		static void go_callback_func(uintptr_t ctx, void* result, void* error, size_t length) {
+			AsyncByteWork* work = reinterpret_cast<AsyncByteWork*>(ctx);
+
+			assert(!work->called.test_and_set()); // ensure called only once
+
+			assert((error == nullptr) ^ (result == nullptr)); // one of them
+			if (result) {
+				memcpy(work->result = new char[length + 1], result, length);
+				work->result[length] = '\0';
+			}
+			else {
+				memcpy(work->error = new char[length + 1], error, length);
+				work->error[length] = '\0';
+			}
+			work->length = length;
+			ENSURE_UV(uv_async_send(&work->request));
+		}
+
+		static void node_callback_func(uv_async_t* request) {
+			AsyncByteWork* work = static_cast<AsyncByteWork*>(request->data);
+
+			Isolate* isolate = Isolate::GetCurrent();
+			v8::HandleScope handleScope(isolate);
+
+			Local<Context> ctx = isolate->GetCurrentContext();
+
+			bool successful;
+			if (work->error == nullptr) {
+				successful = Local<Promise::Resolver>::New(isolate, work->resolver)->Resolve(ctx, ToJSON(isolate, ctx, work->result)).FromJust();
+			}
+			else {
+				successful = Local<Promise::Resolver>::New(isolate, work->resolver)->Reject(ctx, ToJSON(isolate, ctx, work->error)).FromJust();
+			}
+			assert(successful);
+			work->Dispose();
+		}
+
+		static void close_callback_func(uv_handle_t* request) {
+			AsyncByteWork* work = static_cast<AsyncByteWork*>(request->data);
+			delete work;
+		}
+
+		// For test purpose
+		uint64_t now = uv_hrtime();
+		void update_and_print(int tag) {
+			uint64_t next = uv_hrtime();
+			uint64_t duration = next - now;
+			std::cout << tag << ":" << duration << std::endl;
+			now = uv_hrtime();
+		}
+	};
+
+	struct ListenerByteWork {
+		uv_async_t request{};
+		uv_mutex_t mutex{};
+		v8::Persistent<Function> callback;
+		ListenerByteWork(Isolate* isolate, Local<Function> callback) : callback(isolate, callback) {
+			request.data = this;
+			request.close_cb = close_callback_func;
+		}
+
+		~ListenerByteWork() {
+			delete buffer;
+		}
+
+		template<auto F, typename... Ts>
+		void Invoke(Ts&&... args) {
+			this->replace_buffer();
+			ENSURE_UV(uv_async_init(uv_default_loop(), &this->request, this->node_callback_func));
+			ENSURE_UV(uv_mutex_init(&this->mutex));
+			F(args..., go_callback_func, reinterpret_cast<uintptr_t>(this));
+		}
+
+		void Dispose() {
+			// TODO: much more tricky than Async
+			this->callback.Reset();
+			uv_close((uv_handle_t*)&request, NULL);
+		}
+
+		std::vector<char*>* buffer;
+		std::vector<char*>* replace_buffer() {
+			auto old = buffer;
+			buffer = new std::vector<char*>(); // give a suitable initial size?
+			return old;
+		}
+
+		static void go_callback_func(uintptr_t ctx, void* result, void* error, size_t length) {
+			ListenerByteWork* work = reinterpret_cast<ListenerByteWork*>(ctx);
+			assert(error == nullptr);
+			char* message = new char[length + 1];
+			memcpy(message, result, length);
+			message[length] = '\0';
+
+			uv_mutex_lock(&work->mutex);
+			work->buffer->push_back(message);
+			uv_mutex_unlock(&work->mutex);
+
+			ENSURE_UV(uv_async_send(&work->request));
+		}
+
+		static void node_callback_func(uv_async_t* request) {
+			ListenerByteWork* work = static_cast<ListenerByteWork*>(request->data);
+
+			uv_mutex_lock(&work->mutex);
+			const auto result = work->replace_buffer();
+			uv_mutex_unlock(&work->mutex);
+
+			Isolate* isolate = Isolate::GetCurrent();
+			v8::HandleScope handleScope(isolate);
+
+			Local<Context> ctx = isolate->GetCurrentContext();
+
+			const size_t length = result->size();
+			Local<Value>* valueArray = new Local<Value>[length];
+			for (size_t i = 0; i < length; i++)
+			{
+				char* c = result->at(i);
+				valueArray[i] = ToJSON(isolate, ctx, c);
+				delete[] c;
+			}
+			delete result;
+
+			Local<Value> argv[1]{ Array::New(isolate, valueArray, length) };
+
+			delete[] valueArray;
+
+			WRAP_UNUSED(Local<Function>::New(isolate, work->callback)->Call(ctx, ctx->Global(), 1, argv));
+		}
+
+		static void close_callback_func(uv_handle_t* request) {
+			ListenerByteWork* work = static_cast<ListenerByteWork*>(request->data);
+			delete work;
+		}
+
+		// For test purpose
+		uint64_t now = uv_hrtime();
+		void update_and_print(int tag) {
+			uint64_t next = uv_hrtime();
+			uint64_t duration = next - now;
+			std::cout << tag << ":" << duration << std::endl;
+			now = uv_hrtime();
+		}
+	};
+
+	template<auto F, Pattern P, size_t N, typename... A, size_t... S>
 	inline void V8CallbackNumbered(const FunctionCallbackInfo<Value>& args, std::index_sequence<S...>) {
 		Isolate* isolate = args.GetIsolate();
 		constexpr size_t REAL_N = P == Pattern::INSTANCE_LISTENER ? N + 1 : N;
-		if (args.Length() < REAL_N) {
+		if (static_cast<unsigned>(args.Length()) < REAL_N) {
 			return TypeError(isolate, "missing arguments");
 		}
 
@@ -139,7 +344,7 @@ namespace ATRI {
 				}
 				else {
 					// NEVER
-					static_assert(false, "Unimplemented");
+					// static_assert(false, "Unimplemented");
 				}
 			}
 		}
@@ -155,223 +360,21 @@ namespace ATRI {
 			GoFree(result);
 		}
 		else {
-			static_assert(false, "Unimplemented");
+			// static_assert(false, "Unimplemented");
 		}
 	}
 
-	template<void* F, Pattern P, typename... A>
+	template<auto F, Pattern P, typename... A>
 	void V8Callback(const FunctionCallbackInfo<Value>& args) {
 		constexpr size_t N = sizeof...(A);
 		constexpr auto S = std::make_index_sequence<N>{};
 		V8CallbackNumbered<F, P, N, A...>(args, S);
 	}
 
-	template<void* F, Pattern P, typename... A>
+	template<auto F, Pattern P, typename... A>
 	inline void AddMethod(Isolate* isolate, Local<v8::Template> tpl, const char* name) {
 		tpl->Set(isolate, name, FunctionTemplate::New(isolate, V8Callback<F, P, A...>));
 	}
-
-	template<typename T>
-	inline T Convert(Isolate* isolate, Local<Value>&& value) {
-		if constexpr (std::is_same_v<T, CharUtil>) {
-			if (!value->IsString()) throw std::invalid_argument("expect string");
-			return { isolate, value };
-		}
-		else if constexpr (std::is_same_v<T, JsonUtil>) {
-			return { isolate, value };
-		}
-		else if constexpr (std::is_same_v<T, bool>) {
-			if (!value->IsBoolean()) throw std::invalid_argument("expect boolean");
-			return value->BooleanValue(isolate);
-		}
-		else if constexpr (std::is_floating_point_v<T>) {
-			if (!value->IsNumber()) throw std::invalid_argument("expect number");
-			return value->NumberValue(isolate->GetCurrentContext()).FromJust();
-		}
-		else if constexpr (std::is_integral_v<T>) {
-			if (!value->IsNumber()) throw std::invalid_argument("expect number");
-			return value->IntegerValue(isolate->GetCurrentContext()).FromJust();
-		}
-		else if constexpr (std::is_same_v<T, Local<Function>>) {
-			if (!value->IsFunction()) throw std::invalid_argument("expect function");
-			return Local<Function>::Cast(value);
-		}
-	}
-
-	Local<Value> ToJSON(Isolate* isolate, Local<Context> context, char* string) {
-		return v8::JSON::Parse(context, String::NewFromUtf8(isolate, string).ToLocalChecked()).ToLocalChecked();
-	}
-
-	struct AsyncByteWork {
-		uv_async_t request{};
-		v8::Persistent<Promise::Resolver> resolver;
-		AsyncByteWork(Isolate* isolate, Local<Promise::Resolver> resolver) : resolver(isolate, resolver) {
-			request.data = this;
-			request.close_cb = close_callback_func;
-		}
-
-		~AsyncByteWork() {
-			delete result;
-			delete error;
-		}
-
-		template<void* F, typename... Ts>
-		void Invoke(Ts&&... args) {
-			ENSURE_UV(uv_async_init(uv_default_loop(), &this->request, this->node_callback_func));
-			F(args..., go_callback_func, reinterpret_cast<uintptr_t>(this));
-		}
-
-		void Dispose() {
-			this->resolver.Reset();
-			uv_close((uv_handle_t*)&request, NULL);
-		}
-
-		char* error = nullptr;
-		char* result = nullptr;
-		size_t length = -1;
-		std::atomic_bool called = false;
-		static void go_callback_func(uintptr_t ctx, void* result, void* error, size_t length) {
-			AsyncByteWork* work = reinterpret_cast<AsyncByteWork*>(ctx);
-
-			bool expect = false;
-			work->called.compare_exchange_strong(expect, true);
-			assert(!expect);
-
-			assert((error == nullptr) ^ (result == nullptr)); // one of them
-			if (result) {
-				memcpy(work->result = new char[length + 1], result, length);
-				work->result[length] = '\0';
-			}
-			else {
-				memcpy(work->error = new char[length + 1], error, length);
-				work->error[length] = '\0';
-			}
-			work->length = length;
-			ENSURE_UV(uv_async_send(&work->request));
-		}
-
-		static void node_callback_func(uv_async_t* request) {
-			AsyncByteWork* work = static_cast<AsyncByteWork*>(request->data);
-
-			Isolate* isolate = Isolate::GetCurrent();
-			v8::HandleScope handleScope(isolate);
-
-			Local<Context> ctx = isolate->GetCurrentContext();
-
-			if (work->error == nullptr) {
-				Local<Promise::Resolver>::New(isolate, work->resolver)->Resolve(ctx, ToJSON(isolate, ctx, work->result));
-			}
-			else {
-				Local<Promise::Resolver>::New(isolate, work->resolver)->Reject(ctx, ToJSON(isolate, ctx, work->error));
-			}
-			work->Dispose();
-		}
-
-		static void close_callback_func(uv_handle_t* request) {
-			AsyncByteWork* work = static_cast<AsyncByteWork*>(request->data);
-			delete work;
-		}
-
-		// For test purpose
-		uint64_t now = uv_hrtime();
-		void update_and_print(int tag) {
-			uint64_t next = uv_hrtime();
-			uint64_t duration = next - now;
-			std::cout << tag << ":" << duration << std::endl;
-			now = uv_hrtime();
-		}
-	};
-
-	struct ListenerByteWork {
-		uv_async_t request{};
-		uv_mutex_t mutex{};
-		v8::Persistent<Function> callback;
-		ListenerByteWork(Isolate* isolate, Local<Function> callback) : callback(isolate, callback) {
-			request.data = this;
-			request.close_cb = close_callback_func;
-		}
-
-		~ListenerByteWork() {
-			delete buffer;
-		}
-
-		template<void* F, typename... Ts>
-		void Invoke(Ts&&... args) {
-			this->replace_buffer();
-			ENSURE_UV(uv_async_init(uv_default_loop(), &this->request, this->node_callback_func));
-			ENSURE_UV(uv_mutex_init(&this->mutex));
-			F(args..., go_callback_func, reinterpret_cast<uintptr_t>(this));
-		}
-
-		void Dispose() {
-			// TODO: much more tricky than Async
-			this->callback.Reset();
-			uv_close((uv_handle_t*)&request, NULL);
-		}
-
-		std::vector<char*>* buffer;
-		std::vector<char*>* replace_buffer() {
-			auto old = buffer;
-			buffer = new std::vector<char*>(); // give a suitable initial size?
-			return old;
-		}
-
-		static void go_callback_func(uintptr_t ctx, void* result, void* error, size_t length) {
-			ListenerByteWork* work = reinterpret_cast<ListenerByteWork*>(ctx);
-			assert(error == nullptr);
-			char* message = new char[length + 1];
-			memcpy(message, result, length);
-			message[length] = '\0';
-
-			uv_mutex_lock(&work->mutex);
-			work->buffer->push_back(message);
-			uv_mutex_unlock(&work->mutex);
-
-			ENSURE_UV(uv_async_send(&work->request));
-		}
-
-		static void node_callback_func(uv_async_t* request) {
-			ListenerByteWork* work = static_cast<ListenerByteWork*>(request->data);
-
-			uv_mutex_lock(&work->mutex);
-			const auto result = work->replace_buffer();
-			uv_mutex_unlock(&work->mutex);
-
-			Isolate* isolate = Isolate::GetCurrent();
-			v8::HandleScope handleScope(isolate);
-
-			Local<Context> ctx = isolate->GetCurrentContext();
-
-			const size_t length = result->size();
-			Local<Value>* valueArray = new Local<Value>[length];
-			for (size_t i = 0; i < length; i++)
-			{
-				char* c = result->at(i);
-				valueArray[i] = ToJSON(isolate, ctx, c);
-				delete[] c;
-			}
-			delete result;
-
-			Local<Value> argv[1]{ Array::New(isolate, valueArray, length) };
-
-			delete[] valueArray;
-			Local<Function>::New(isolate, work->callback)->Call(ctx, ctx->Global(), 1, argv);
-		}
-
-		static void close_callback_func(uv_handle_t* request) {
-			ListenerByteWork* work = static_cast<ListenerByteWork*>(request->data);
-			delete work;
-		}
-
-		// For test purpose
-		uint64_t now = uv_hrtime();
-		void update_and_print(int tag) {
-			uint64_t next = uv_hrtime();
-			uint64_t duration = next - now;
-			std::cout << tag << ":" << duration << std::endl;
-			now = uv_hrtime();
-		}
-	};
 }
 
 #endif
