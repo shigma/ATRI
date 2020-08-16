@@ -11,7 +11,8 @@ import (
 
 func Check(err error) {
 	if err != nil {
-		log.Fatalf("遇到错误: %v", err)
+		log.Errorf("遇到错误: %v", err)
+		panic(err)
 	}
 }
 

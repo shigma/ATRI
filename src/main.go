@@ -79,6 +79,14 @@ func _login(botC unsafe.Pointer, cb C.ByteCallback, ctx C.uintptr_t) {
 	}()
 }
 
+//export _loginInteractive
+func _loginInteractive(botC unsafe.Pointer) *C.char {
+	bot := (*CQBot)(botC)
+	rsp := bot.LoginInteractive()
+	b, _ := json.Marshal(rsp)
+	return C.CString(string(b))
+}
+
 //export onEvent
 func onEvent(botC unsafe.Pointer, cb C.ByteCallback, ctx C.uintptr_t) {
 	bot := (*CQBot)(botC)
