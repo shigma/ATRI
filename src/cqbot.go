@@ -102,6 +102,126 @@ func (bot *CQBot) onEvent(callback func(MSG)) {
 		})
 	})
 
+	bot.Client.OnGroupMessage(func(c *client.QQClient, m *message.GroupMessage) {
+		// checkMedia(m.Elements)
+		for _, elem := range m.Elements {
+			if file, ok := elem.(*message.GroupFileElement); ok {
+				callback(MSG{
+					"post_type":   "notice",
+					"notice_type": "group_upload",
+					"group_id":    m.GroupCode,
+					"user_id":     m.Sender.Uin,
+					"file": MSG{
+						"id":    file.Path,
+						"name":  file.Name,
+						"size":  file.Size,
+						"busid": file.Busid,
+						"url":   c.GetGroupFileUrl(m.GroupCode, file.Path, file.Busid),
+					},
+					"self_id": c.Uin,
+					"time":    time.Now().Unix(),
+				})
+				return
+			}
+		}
+		cqm := ToStringMessage(m.Elements, m.GroupCode, true)
+		id := m.Id
+		// TODO db
+		// if bot.db != nil {
+		// 	id = bot.InsertGroupMessage(m)
+		// }
+		gm := MSG{
+			"anonymous":    nil,
+			"font":         0,
+			"group_id":     m.GroupCode,
+			"message":      ToFormattedMessage(m.Elements, m.GroupCode, false),
+			"message_id":   id,
+			"message_type": "group",
+			"post_type":    "message",
+			"raw_message":  cqm,
+			"self_id":      c.Uin,
+			"sender": MSG{
+				"age":     0,
+				"area":    "",
+				"level":   "",
+				"sex":     "unknown",
+				"user_id": m.Sender.Uin,
+			},
+			"sub_type": "normal",
+			"time":     time.Now().Unix(),
+			"user_id":  m.Sender.Uin,
+		}
+		if m.Sender.IsAnonymous() {
+			gm["anonymous"] = MSG{
+				"flag": "",
+				"id":   0,
+				"name": m.Sender.Nickname,
+			}
+			gm["sender"].(MSG)["nickname"] = "匿名消息"
+			gm["sub_type"] = "anonymous"
+		} else {
+			mem := c.FindGroup(m.GroupCode).FindMember(m.Sender.Uin)
+			ms := gm["sender"].(MSG)
+			ms["role"] = func() string {
+				switch mem.Permission {
+				case client.Owner:
+					return "owner"
+				case client.Administrator:
+					return "admin"
+				default:
+					return "member"
+				}
+			}()
+			ms["nickname"] = mem.Nickname
+			ms["card"] = mem.CardName
+			ms["title"] = mem.SpecialTitle
+		}
+		callback(gm)
+	})
+
+	bot.Client.OnTempMessage(func(c *client.QQClient, m *message.TempMessage) {
+		// checkMedia(m.Elements)
+		cqm := ToStringMessage(m.Elements, 0, true)
+		bot.tempMsgCache.Store(m.Sender.Uin, m.GroupCode)
+		callback(MSG{
+			"post_type":    "message",
+			"message_type": "private",
+			"sub_type":     "group",
+			"message_id":   m.Id,
+			"user_id":      m.Sender.Uin,
+			"message":      ToFormattedMessage(m.Elements, 0, false),
+			"raw_message":  cqm,
+			"font":         0,
+			"self_id":      c.Uin,
+			"time":         time.Now().Unix(),
+			"sender": MSG{
+				"user_id":  m.Sender.Uin,
+				"nickname": m.Sender.Nickname,
+				"sex":      "unknown",
+				"age":      0,
+			},
+		})
+	})
+
+	bot.Client.OnGroupMuted(func(c *client.QQClient, e *client.GroupMuteEvent) {
+		callback(MSG{
+			"post_type":   "notice",
+			"duration":    e.Time,
+			"group_id":    e.GroupCode,
+			"notice_type": "group_ban",
+			"operator_id": e.OperatorUin,
+			"self_id":     c.Uin,
+			"user_id":     e.TargetUin,
+			"time":        time.Now().Unix(),
+			"sub_type": func() string {
+				if e.Time > 0 {
+					return "ban"
+				}
+				return "lift_ban"
+			}(),
+		})
+	})
+
 	bot.Client.OnFriendMessageRecalled(func(c *client.QQClient, e *client.FriendMessageRecalledEvent) {
 		f := c.FindFriend(e.FriendUin)
 		gid := ToGlobalId(e.FriendUin, e.MessageId)
@@ -242,6 +362,63 @@ func (bot *CQBot) onEvent(callback func(MSG)) {
 			"self_id":  c.Uin,
 		})
 	})
+
+	bot.Client.OnNewFriendRequest(func(c *client.QQClient, e *client.NewFriendRequest) {
+		flag := strconv.FormatInt(e.RequestId, 10)
+		bot.friendReqCache.Store(flag, e)
+		callback(MSG{
+			"post_type":    "request",
+			"request_type": "friend",
+			"user_id":      e.RequesterUin,
+			"comment":      e.Message,
+			"flag":         flag,
+			"time":         time.Now().Unix(),
+			"self_id":      c.Uin,
+		})
+	})
+
+	bot.Client.OnNewFriendAdded(func(c *client.QQClient, e *client.NewFriendEvent) {
+		bot.tempMsgCache.Delete(e.Friend.Uin)
+		callback(MSG{
+			"post_type":   "notice",
+			"notice_type": "friend_add",
+			"self_id":     c.Uin,
+			"user_id":     e.Friend.Uin,
+			"time":        time.Now().Unix(),
+		})
+	})
+
+	bot.Client.OnGroupInvited(func(c *client.QQClient, e *client.GroupInvitedRequest) {
+		flag := strconv.FormatInt(e.RequestId, 10)
+		bot.invitedReqCache.Store(flag, e)
+		callback(MSG{
+			"post_type":    "request",
+			"request_type": "group",
+			"sub_type":     "invite",
+			"group_id":     e.GroupCode,
+			"user_id":      e.InvitorUin,
+			"comment":      "",
+			"flag":         flag,
+			"time":         time.Now().Unix(),
+			"self_id":      c.Uin,
+		})
+	})
+
+	bot.Client.OnUserWantJoinGroup(func(c *client.QQClient, e *client.UserJoinGroupRequest) {
+		flag := strconv.FormatInt(e.RequestId, 10)
+		bot.joinReqCache.Store(flag, e)
+		callback(MSG{
+			"post_type":    "request",
+			"request_type": "group",
+			"sub_type":     "add",
+			"group_id":     e.GroupCode,
+			"user_id":      e.RequesterUin,
+			"comment":      e.Message,
+			"flag":         flag,
+			"time":         time.Now().Unix(),
+			"self_id":      c.Uin,
+		})
+	})
 }
 
 func (bot *CQBot) SendPrivateMessage(target int64, content string) *message.PrivateMessage {
@@ -266,6 +443,7 @@ func (bot *CQBot) GetGroupMemberList(groupId int64) []MSG {
 	}
 	return members
 }
+
 func convertGroupMemberInfo(groupId int64, m *client.GroupMemberInfo) MSG {
 	return MSG{
 		"group_id":       groupId,
