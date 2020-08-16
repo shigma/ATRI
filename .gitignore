@@ -2,6 +2,7 @@ dist
 build
 test.js
 
+go.sum
 node_modules/
 npm-debug.log
 yarn-debug.log
