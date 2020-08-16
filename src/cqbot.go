@@ -81,6 +81,7 @@ func (bot *CQBot) Login() bool {
 
 func (bot *CQBot) onEvent(callback func(MSG)) {
 	bot.Client.OnPrivateMessage(func(c *client.QQClient, m *message.PrivateMessage) {
+		bot.checkMedia(m.Elements)
 		cqm := ToStringMessage(m.Elements, 0, true)
 		callback(MSG{
 			"post_type":    "message",
@@ -103,7 +104,7 @@ func (bot *CQBot) onEvent(callback func(MSG)) {
 	})
 
 	bot.Client.OnGroupMessage(func(c *client.QQClient, m *message.GroupMessage) {
-		// checkMedia(m.Elements)
+		bot.checkMedia(m.Elements)
 		for _, elem := range m.Elements {
 			if file, ok := elem.(*message.GroupFileElement); ok {
 				callback(MSG{
@@ -180,7 +181,7 @@ func (bot *CQBot) onEvent(callback func(MSG)) {
 	})
 
 	bot.Client.OnTempMessage(func(c *client.QQClient, m *message.TempMessage) {
-		// checkMedia(m.Elements)
+		bot.checkMedia(m.Elements)
 		cqm := ToStringMessage(m.Elements, 0, true)
 		bot.tempMsgCache.Store(m.Sender.Uin, m.GroupCode)
 		callback(MSG{
@@ -512,4 +513,46 @@ func (bot *CQBot) GetFriendList() []MSG {
 		})
 	}
 	return fs
+}
+
+func (bot *CQBot) checkMedia(e []message.IMessageElement) {
+	// TODO file io
+	// for _, elem := range e {
+	// 	switch i := elem.(type) {
+	// 	case *message.ImageElement:
+	// 		filename := hex.EncodeToString(i.Md5) + ".image"
+	// 		if !global.PathExists(path.Join(global.IMAGE_PATH, filename)) {
+	// 			_ = ioutil.WriteFile(path.Join(global.IMAGE_PATH, filename), binary.NewWriterF(func(w *binary.Writer) {
+	// 				w.Write(i.Md5)
+	// 				w.WriteUInt32(uint32(i.Size))
+	// 				w.WriteString(i.Filename)
+	// 				w.WriteString(i.Url)
+	// 			}), os.ModePerm)
+	// 		}
+	// 		i.Filename = filename
+	// 	case *message.VoiceElement:
+	// 		i.Name = strings.ReplaceAll(i.Name, "{", "")
+	// 		i.Name = strings.ReplaceAll(i.Name, "}", "")
+	// 		if !global.PathExists(path.Join(global.VOICE_PATH, i.Name)) {
+	// 			b, err := global.GetBytes(i.Url)
+	// 			if err != nil {
+	// 				log.Warnf("语音文件 %v 下载失败: %v", i.Name, err)
+	// 				continue
+	// 			}
+	// 			_ = ioutil.WriteFile(path.Join(global.VOICE_PATH, i.Name), b, os.ModePerm)
+	// 		}
+	// 	case *message.ShortVideoElement:
+	// 		filename := hex.EncodeToString(i.Md5) + ".video"
+	// 		if !global.PathExists(path.Join(global.VIDEO_PATH, filename)) {
+	// 			_ = ioutil.WriteFile(path.Join(global.VIDEO_PATH, filename), binary.NewWriterF(func(w *binary.Writer) {
+	// 				w.Write(i.Md5)
+	// 				w.WriteUInt32(uint32(i.Size))
+	// 				w.WriteString(i.Name)
+	// 				w.Write(i.Uuid)
+	// 			}), os.ModePerm)
+	// 		}
+	// 		i.Name = filename
+	// 		i.Url = bot.Client.GetShortVideoUrl(i.Uuid, i.Md5)
+	// 	}
+	// }
 }

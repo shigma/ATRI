@@ -65,6 +65,12 @@ func ToStringMessage(e []message.IMessageElement, code int64, raw ...bool) (r st
 			} else {
 				r += fmt.Sprintf(`[CQ:record,file=%s,url=%s]`, o.Name, CQCodeEscapeValue(o.Url))
 			}
+		case *message.ShortVideoElement:
+			if ur {
+				r += fmt.Sprintf(`[CQ:video,file=%s]`, o.Name)
+			} else {
+				r += fmt.Sprintf(`[CQ:video,file=%s,url=%s]`, o.Name, CQCodeEscapeValue(o.Url))
+			}
 		case *message.ImageElement:
 			if ur {
 				r += fmt.Sprintf(`[CQ:image,file=%s]`, o.Filename)
