@@ -499,7 +499,10 @@ func (bot *CQBot) _SendGroupMessage(groupId int64, m *message.SendingMessage) in
 		newElem = append(newElem, elem)
 	}
 	m.Elements = newElem
-	bot.Client.SendGroupMessage(groupId, m)
+	ret := bot.Client.SendGroupMessage(groupId, m)
+	if ret.Id == -1 {
+		return -1
+	}
 	// return bot.InsertGroupMessage(ret)
 	return 0
 }
