@@ -513,18 +513,20 @@ func (bot *CQBot) SendGroupMessage(groupId int64, i interface{}) MSG {
 		return nil
 	}
 	elem := bot.ConvertStringMessage(str, true)
-	// fix at display
-	for _, e := range elem {
-		if at, ok := e.(*message.AtElement); ok && at.Target != 0 {
-			at.Display = "@" + func() string {
-				mem := bot.Client.FindGroup(groupId).FindMember(at.Target)
-				if mem != nil {
-					return mem.DisplayName()
-				}
-				return strconv.FormatInt(at.Target, 10)
-			}()
+	fixAt := func(elem []message.IMessageElement) {
+		for _, e := range elem {
+			if at, ok := e.(*message.AtElement); ok && at.Target != 0 {
+				at.Display = "@" + func() string {
+					mem := bot.Client.FindGroup(groupId).FindMember(at.Target)
+					if mem != nil {
+						return mem.DisplayName()
+					}
+					return strconv.FormatInt(at.Target, 10)
+				}()
+			}
 		}
 	}
+	fixAt(elem)
 	mid := bot._SendGroupMessage(groupId, &message.SendingMessage{Elements: elem})
 	if mid == -1 {
 		return nil
