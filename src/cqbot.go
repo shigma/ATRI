@@ -452,15 +452,22 @@ func (bot *CQBot) _SendPrivateMessage(target int64, m *message.SendingMessage) i
 		newElem = append(newElem, elem)
 	}
 	m.Elements = newElem
-	var id int32
+	var id int32 = -1
 	if bot.Client.FindFriend(target) != nil {
-		id = bot.Client.SendPrivateMessage(target, m).Id
+		msg := bot.Client.SendPrivateMessage(target, m)
+		if msg != nil {
+			id = msg.Id
+		}
 	} else {
 		if code, ok := bot.tempMsgCache.Load(target); ok {
-			id = bot.Client.SendTempMessage(code.(int64), target, m).Id
-		} else {
-			return -1
+			msg := bot.Client.SendTempMessage(code.(int64), target, m)
+			if msg != nil {
+				id = msg.Id
+			}
 		}
+	}
+	if id == -1 {
+		return -1
 	}
 	return ToGlobalId(target, id)
 }
@@ -500,7 +507,7 @@ func (bot *CQBot) _SendGroupMessage(groupId int64, m *message.SendingMessage) in
 	}
 	m.Elements = newElem
 	ret := bot.Client.SendGroupMessage(groupId, m)
-	if ret.Id == -1 {
+	if ret == nil || ret.Id == -1 {
 		return -1
 	}
 	// return bot.InsertGroupMessage(ret)
