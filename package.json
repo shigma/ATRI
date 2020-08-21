@@ -12,11 +12,11 @@
   },
   "devDependencies": {
     "@types/ms": "^0.7.31",
-    "@types/node": "^14.0.27",
+    "@types/node": "^14.6.0",
     "fast-glob": "^3.2.4",
     "ms": "^2.1.2",
     "ora": "^5.0.0",
     "ts-node": "^8.10.2",
-    "typescript": "^3.9.7"
+    "typescript": "^4.0.2"
   }
 }
